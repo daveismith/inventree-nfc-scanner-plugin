@@ -41,8 +41,12 @@ def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCom
 
 
 def pending_commands(machine_config):
-    """Commands not yet acknowledged, oldest first."""
-    return ScannerCommand.objects.filter(machine=machine_config, acked_at__isnull=True).order_by('seq')
+    """Commands not yet acknowledged, oldest first; never one for a job that has already ended."""
+    return (
+        ScannerCommand.objects.filter(machine=machine_config, acked_at__isnull=True)
+        .exclude(job__state__in=[Job.State.DONE, Job.State.FAILED, Job.State.CANCELLED])
+        .order_by('seq')
+    )
 
 
 def _finish(job: Job, state: str, **fields) -> None:
@@ -51,6 +55,10 @@ def _finish(job: Job, state: str, **fields) -> None:
     job.state = state
     job.finished_at = timezone.now()
     job.save()
+    # Its commands are done with. A scanner that restarts begins its acks again at zero, so
+    # anything still marked unacknowledged would be sent again, and a finished `program`
+    # must not be written twice.
+    ScannerCommand.objects.filter(job=job, acked_at__isnull=True).update(acked_at=job.finished_at)
 
 
 def _link_barcode(job: Job) -> None:

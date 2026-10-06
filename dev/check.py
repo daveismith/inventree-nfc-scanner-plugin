@@ -200,6 +200,17 @@ def run(api, admin, scanner, machine, loc):
     st, j = api.call('GET', f'{P}/api/jobs/{job["id"]}/', token=admin)
     check(j['state'] == 'cancelled', 'and ends cancelled when the scanner confirms', j['state'])
 
+    # --- a scanner that restarts (ack back at 0) is not handed a finished job's command again
+    st, job = api.call('POST', f'{P}/api/jobs/', token=admin, body={'location': loc, 'scanner': machine})
+    st, reply = sync({'boot': boot + 1})
+    cmd = next(c for c in reply['cmds'] if c.get('id') == job['id'])
+    sync({'boot': boot + 1, 'ack': cmd['seq'], 'msgs': [
+        {'seq': 1, 'rsp': 'program', 'ok': True, 'id': job['id']},
+        {'seq': 2, 'evt': 'done', 'id': job['id'], 'uid': '04A1B2C3D4E5F6', 'type': 'ntag215', 'protected': False},
+    ]})
+    st, reply = sync({'boot': boot + 2})
+    check(not any(c.get('id') == job['id'] for c in reply['cmds']), 'a restarted scanner is not sent a finished job again', reply)
+
     # --- a tag re-assigned to another bin takes its barcode with it
     st, loc2 = api.call('POST', '/api/stock/location/', token=admin, body={'name': 'Bin A2 (check)', 'description': 'test bin'})
     if st != 201:

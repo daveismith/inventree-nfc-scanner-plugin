@@ -33,7 +33,9 @@
 # The default server address is configured in the .env file
 # If not specified, the proxy listens for all http/https traffic
 # If you need to listen on multiple addresses, or use a different port, you can modify this section directly
-{$INVENTREE_SITE_URL:"http://, https://"} {
+# Any host on the port, not only INVENTREE_SITE_URL: a scanner on the LAN reaches this
+# instance by the machine's IP address, which it cannot resolve by name.
+:{$INVENTREE_HTTP_PORT:8080} {
 	import log_common inventree
 
 	encode gzip

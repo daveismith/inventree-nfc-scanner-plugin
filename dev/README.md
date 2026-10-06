@@ -27,6 +27,10 @@ safe to run again.
 
 Then open <http://inventree.localhost:8080> and log in as `admin` / `admin-nfc-dev`.
 
+The proxy answers on any host name, not only `inventree.localhost`, so a scanner on the LAN
+can reach this instance as `http://<this machine's IP>:8080/plugin/nfcscanner` (the firmware's
+`CONFIG_APP_NET_ALLOW_HTTP` must be on for a plain-http URL).
+
 ## How the plugin gets in
 
 `inventree-data/plugins.txt` holds one line, `-e /home/inventree/plugins/nfcscanner-src`,
@@ -34,6 +38,10 @@ and the compose file mounts this repository there. At every start InvenTree runs
 `pip install -r plugins.txt`, which installs the plugin editable from the mount.
 
 - **Python changes** take effect after `docker compose restart inventree-server inventree-worker`.
+  The same restart is needed after a fresh `docker compose up` from stopped: the server
+  process starts before the editable install from `plugins.txt` is visible to it, and
+  until then the registry reports "No module named 'inventree_nfc_scanner'" and every
+  plugin URL redirects to `/web` (a POST there fails CSRF). `setup.sh` does that restart.
 - **Frontend changes** need `npm run build` in `frontend/` (which writes to
   `inventree_nfc_scanner/static/`) and then the same restart, which re-collects static files.
   For live reloading instead, see "Frontend development" in the main README.

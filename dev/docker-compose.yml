@@ -1,0 +1,81 @@
+# A local InvenTree, the version the plugin targets, with this plugin installed from the
+# source tree next to it. For developing and testing the plugin; see dev/README.md.
+#
+# Adapted from InvenTree's contrib/container/docker-compose.yml (1.4.3). Differences: the
+# plugin source is mounted into the server and worker, the proxy listens on a high port, and
+# an admin user is created from .env.
+
+services:
+    inventree-db:
+        image: postgres:17
+        container_name: nfcdev-db
+        expose:
+            - ${INVENTREE_DB_PORT:-5432}/tcp
+        environment:
+            - PGDATA=/var/lib/postgresql/data/pgdb
+            - POSTGRES_USER=${INVENTREE_DB_USER:?You must specify the 'INVENTREE_DB_USER' variable in the .env file!}
+            - POSTGRES_PASSWORD=${INVENTREE_DB_PASSWORD:?You must specify the 'INVENTREE_DB_PASSWORD' variable in the .env file!}
+            - POSTGRES_DB=${INVENTREE_DB_NAME:?You must specify the 'INVENTREE_DB_NAME' variable in the .env file!}
+        volumes:
+            - ${INVENTREE_EXT_VOLUME:?You must specify the 'INVENTREE_EXT_VOLUME' variable in the .env file!}:/var/lib/postgresql/data/:z
+        restart: unless-stopped
+
+    inventree-cache:
+        image: redis:7-alpine
+        container_name: nfcdev-cache
+        env_file:
+            - .env
+        expose:
+            - ${INVENTREE_CACHE_PORT:-6379}
+        volumes:
+            - ${INVENTREE_EXT_VOLUME}/redis:/data
+        restart: always
+
+    inventree-server:
+        image: inventree/inventree:${INVENTREE_TAG:-stable}
+        container_name: nfcdev-server
+        expose:
+            - ${INVENTREE_WEB_PORT:-8000}
+        depends_on:
+            - inventree-db
+            - inventree-cache
+        env_file:
+            - .env
+        environment:
+            INVENTREE_SERVER: http://inventree-server:${INVENTREE_WEB_PORT}
+        volumes:
+            - ${INVENTREE_EXT_VOLUME}:/home/inventree/data:z
+            # The plugin, installed editable from here (see plugins.txt)
+            - ..:/home/inventree/plugins/nfcscanner-src:z
+        restart: unless-stopped
+
+    inventree-worker:
+        image: inventree/inventree:${INVENTREE_TAG:-stable}
+        container_name: nfcdev-worker
+        command: invoke worker
+        depends_on:
+            - inventree-server
+        env_file:
+            - .env
+        volumes:
+            - ${INVENTREE_EXT_VOLUME}:/home/inventree/data:z
+            - ..:/home/inventree/plugins/nfcscanner-src:z
+        restart: unless-stopped
+
+    inventree-proxy:
+        container_name: nfcdev-proxy
+        image: caddy:alpine
+        restart: always
+        depends_on:
+            - inventree-server
+        ports:
+            - ${INVENTREE_HTTP_PORT:-8080}:${INVENTREE_HTTP_PORT:-8080}
+        env_file:
+            - .env
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
+            - ${INVENTREE_EXT_VOLUME}/static:/var/www/static:z
+            - ${INVENTREE_EXT_VOLUME}/media:/var/www/media:z
+            - ${INVENTREE_EXT_VOLUME}:/var/log:z
+            - ${INVENTREE_EXT_VOLUME}:/data:z
+            - ${INVENTREE_EXT_VOLUME}:/config:z

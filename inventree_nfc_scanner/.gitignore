@@ -1,0 +1,2 @@
+# Built from ../frontend (npm run build). Committed, so that installing straight from
+# the repository (plugins.txt with a git URL) works without a build step.

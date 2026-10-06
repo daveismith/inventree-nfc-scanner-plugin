@@ -1,0 +1,261 @@
+"""The plugin's HTTP endpoints: /sync for scanners, and a small API for the panel."""
+
+import logging
+
+from django.http import Http404
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+
+from rest_framework import permissions, status
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from machine import registry
+from stock.models import StockLocation
+
+from . import ndef
+from .machine import NETWORK_DRIVER, NfcScannerMachine, NfcScannerStatus
+from .models import Job, ScannerCommand
+from .serializers import JobCreateSerializer, JobSerializer, UsbJobSerializer
+from .sync import enqueue, handle_sync
+
+logger = logging.getLogger('inventree')
+
+
+def plugin():
+    """The running plugin instance (for its settings)."""
+    from plugin import registry as plugin_registry
+
+    return plugin_registry.get_plugin('nfcscanner')
+
+
+def base_url() -> str:
+    """The server's own address, which goes into every tag's URI record."""
+    from common.settings import get_global_setting
+
+    url = get_global_setting('INVENTREE_BASE_URL', '') or ''
+    if not url:
+        raise ValidationError({'base_url': 'Set the "Base URL" global setting first; it goes on every tag.'})
+    return url
+
+
+class CanProgramTags(permissions.BasePermission):
+    """Programming a tag changes the location's barcode, so it needs that permission."""
+
+    def has_permission(self, request, view):
+        """Check the stock location change permission."""
+        return bool(request.user and request.user.is_authenticated and request.user.has_perm('stock.change_stocklocation'))
+
+
+def tag_payload(location: StockLocation) -> dict:
+    """What a `program` job for this location carries."""
+    plg = plugin()
+    data = {
+        'location': location.pk,
+        'text': ndef.location_text(location.pk),
+        'uri': ndef.location_uri(base_url(), location.pk),
+        'ndef': ndef.build_message(base_url(), location.pk).hex().upper(),
+        'timeout_s': int(plg.get_setting('JOB_TIMEOUT_S') or 60),
+    }
+    pwd = (plg.get_setting('TAG_PASSWORD') or '').strip().upper()
+    if pwd:
+        data['pwd'] = pwd
+        data['pack'] = (plg.get_setting('TAG_PACK') or '0000').strip().upper()
+    return data
+
+
+class LocationTagView(APIView):
+    """GET api/location/<pk>/tag/ : the message for the location's tag, for the USB route."""
+
+    permission_classes = [CanProgramTags]
+
+    def get(self, request, pk, *args, **kwargs):
+        """Build it."""
+        location = get_object_or_404(StockLocation, pk=pk)
+        return Response(tag_payload(location))
+
+
+class LinkView(APIView):
+    """POST api/location/<pk>/link/ : make a tag's UID the location's barcode.
+
+    Unlike InvenTree's own barcode link, this takes the barcode away from whatever held it
+    before (a bin the tag used to belong to), which is what re-programming a tag means.
+    """
+
+    permission_classes = [CanProgramTags]
+
+    def post(self, request, pk, *args, **kwargs):
+        """Link it."""
+        from .barcodes import link_uid
+
+        location = get_object_or_404(StockLocation, pk=pk)
+        uid = str(request.data.get('uid', '')).strip().upper()
+        if not uid or len(uid) > 20 or any(c not in '0123456789ABCDEF' for c in uid):
+            raise ValidationError({'uid': 'the tag UID, as hex'})
+        try:
+            outcome = link_uid(location, uid)
+        except Exception as exc:  # noqa: BLE001 - say what InvenTree said
+            raise ValidationError({'uid': str(exc)})
+        return Response({'location': location.pk, 'uid': uid, 'outcome': outcome})
+
+
+class UsbJobView(APIView):
+    """POST api/location/<pk>/jobs/usb/ : record the outcome of a job the browser did over USB."""
+
+    permission_classes = [CanProgramTags]
+
+    def post(self, request, pk, *args, **kwargs):
+        """Record it."""
+        location = get_object_or_404(StockLocation, pk=pk)
+        serializer = UsbJobSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+        job = Job.objects.create(
+            kind=d.get('kind', Job.Kind.PROGRAM), location=location, machine=None, created_by=request.user,
+            state=d['state'], overwrite=d.get('overwrite', False), uid=d.get('uid', ''),
+            tag_type=d.get('tag_type', ''), protected=d.get('protected'), error=d.get('error', ''),
+            error_detail=d.get('error_detail', ''), finished_at=timezone.now(),
+        )
+        return Response(JobSerializer(job).data, status=status.HTTP_201_CREATED)
+
+
+def scanner_machines() -> list[NfcScannerMachine]:
+    """Every active NFC scanner machine."""
+    return [m for m in registry.get_machines(active=True) if isinstance(m, NfcScannerMachine)]
+
+
+def scanner_dict(machine: NfcScannerMachine) -> dict:
+    """A scanner as the panel sees it."""
+    seen = machine.last_seen
+    return {
+        'id': str(machine.pk),
+        'name': machine.name,
+        'driver': machine.machine_config.driver,
+        'status': machine.status.name.lower(),
+        'status_text': machine.status_text,
+        'online': machine.status in (NfcScannerStatus.ONLINE, NfcScannerStatus.BUSY),
+        'last_seen': seen.isoformat() if seen else None,
+        'last_tag': machine.last_tag,
+        'location': machine.get_setting('LOCATION', 'M') or None,
+    }
+
+
+class ScannerListView(APIView):
+    """GET api/scanners/ : the scanners, with their state."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """List them."""
+        return Response([scanner_dict(m) for m in scanner_machines()])
+
+
+class JobListView(APIView):
+    """GET api/jobs/ : recent jobs. POST api/jobs/ : a job for a network scanner."""
+
+    permission_classes = [CanProgramTags]
+
+    def get(self, request, *args, **kwargs):
+        """Recent jobs, newest first; `location` and `scanner` filter."""
+        jobs = Job.objects.all()
+        if request.query_params.get('location'):
+            jobs = jobs.filter(location_id=request.query_params['location'])
+        if request.query_params.get('scanner'):
+            jobs = jobs.filter(machine_id=request.query_params['scanner'])
+        return Response(JobSerializer(jobs[:50], many=True).data)
+
+    def post(self, request, *args, **kwargs):
+        """Queue a job for a network scanner."""
+        serializer = JobCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        d = serializer.validated_data
+        location = get_object_or_404(StockLocation, pk=d['location'])
+
+        machine = registry.get_machine(d['scanner'])
+        if not isinstance(machine, NfcScannerMachine) or not machine.active:
+            raise ValidationError({'scanner': 'No such scanner, or it is not active.'})
+        if machine.machine_config.driver != NETWORK_DRIVER:
+            raise ValidationError({'scanner': 'That scanner is not a network scanner.'})
+
+        kind = d.get('kind', Job.Kind.PROGRAM)
+        job = Job.objects.create(
+            kind=kind, location=location, machine=machine.machine_config, created_by=request.user,
+            overwrite=d.get('overwrite', False), timeout_s=int(plugin().get_setting('JOB_TIMEOUT_S') or 60),
+        )
+
+        if kind == Job.Kind.PROGRAM:
+            payload = tag_payload(location)
+            cmd = {'cmd': 'program', 'id': job.pk, 'ndef': payload['ndef'], 'timeout_ms': job.timeout_s * 1000}
+            if job.overwrite:
+                cmd['overwrite'] = True
+            if 'pwd' in payload:
+                cmd['pwd'] = payload['pwd']
+                cmd['pack'] = payload['pack']
+        else:
+            cmd = {'cmd': 'wipe', 'id': job.pk, 'timeout_ms': job.timeout_s * 1000}
+            pwd = (plugin().get_setting('TAG_PASSWORD') or '').strip().upper()
+            if pwd:
+                cmd['pwd'] = pwd
+        enqueue(machine.machine_config, cmd, job=job)
+        return Response(JobSerializer(job).data, status=status.HTTP_201_CREATED)
+
+
+class JobDetailView(APIView):
+    """GET api/jobs/<pk>/ : one job."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk, *args, **kwargs):
+        """Return it."""
+        return Response(JobSerializer(get_object_or_404(Job, pk=pk)).data)
+
+
+class JobCancelView(APIView):
+    """POST api/jobs/<pk>/cancel/ : cancel a job that has not finished."""
+
+    permission_classes = [CanProgramTags]
+
+    def post(self, request, pk, *args, **kwargs):
+        """Cancel it: at once if the scanner has not collected it, else by asking the scanner."""
+        job = get_object_or_404(Job, pk=pk)
+        if job.finished:
+            return Response(JobSerializer(job).data)
+        if job.machine is None or job.state == Job.State.QUEUED:
+            ScannerCommand.objects.filter(job=job, acked_at__isnull=True, sent_at__isnull=True).delete()
+            job.state = Job.State.CANCELLED
+            job.finished_at = timezone.now()
+            job.save()
+        else:
+            enqueue(job.machine, {'cmd': 'cancel', 'id': job.pk}, job=job)
+        return Response(JobSerializer(job).data)
+
+
+class SyncView(APIView):
+    """POST sync/ : the exchange with a network scanner. Token authentication."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Handle one call."""
+        body = request.data if isinstance(request.data, dict) else {}
+        reader_id = str(body.get('reader', '')).strip()
+        if not reader_id:
+            raise ValidationError({'reader': 'required'})
+        if int(body.get('proto', 0) or 0) != 1:
+            raise ValidationError({'proto': 'this plugin speaks protocol version 1'})
+
+        driver = registry.get_driver_instance(NETWORK_DRIVER)
+        machine = driver.find_by_reader_id(reader_id) if driver else None
+        if machine is None:
+            logger.info('NFC /sync from unknown reader %s (user %s)', reader_id, request.user)
+            raise Http404(f'No active scanner is configured with reader id {reader_id!r}')
+
+        allowed_user = str(machine.get_setting('USER', 'D') or '')
+        if allowed_user != str(request.user.pk):
+            raise PermissionDenied('This token does not belong to the user configured for that scanner.')
+
+        plg = plugin()
+        long_poll = bool(plg.get_setting('LONG_POLL')) if plg else False
+        max_s = int(plg.get_setting('LONG_POLL_MAX_S') or 0) if (plg and long_poll) else 0
+        return Response(handle_sync(machine, body, long_poll_max_s=max_s))

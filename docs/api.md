@@ -1,0 +1,190 @@
+# API
+
+Everything the plugin serves is under `/plugin/nfcscanner/`. Two kinds of client use it:
+
+- **The browser**, logged in to InvenTree (session). Only the plugin's own panel needs these,
+  but they are plain REST and can be used by anything with a session or an API token.
+- **A network scanner**, with an InvenTree API token, which uses one endpoint: `sync/`.
+
+Plugin URLs accept a session cookie (with CSRF token) or an `Authorization: Token …`
+header. HTTP basic authentication is not accepted on plugin URLs, only on `/api/`.
+
+All bodies and responses are JSON. Hex strings are upper case on output and accepted in
+either case.
+
+## For the browser
+
+Programming a tag needs the user to have change permission on stock locations, because
+the tag's UID becomes the location's barcode.
+
+### `GET api/location/<pk>/tag/`
+
+What a `program` job for this location carries. This is the one place the tag's contents
+are built, so the USB route fetches it rather than building its own.
+
+```json
+{
+  "location": 42,
+  "text": "INV-SL42",
+  "uri": "https://inventree.example/web/stock/location/42",
+  "ndef": "9101...",
+  "timeout_s": 60,
+  "pwd": "A1B2C3D4",
+  "pack": "1234"
+}
+```
+
+`pwd` and `pack` are present only when the *Tag password* setting is set. `ndef` is the
+complete NDEF message as hex: a URI record for the location's page (built from the
+*Base URL* global setting, which must be set) and a Text record with InvenTree's short
+barcode for the location. 400 with `{"base_url": "..."}` when the base URL is not set.
+
+### `POST api/location/<pk>/link/`
+
+Make a tag's UID the location's barcode: `{"uid": "04A1B2C3D4E5F6"}`. Unlike InvenTree's own
+`/api/barcode/link/`, which refuses a barcode something already carries, this takes it from
+whatever held it before, which is what re-programming a tag for another bin means. Answers
+`{"location": 42, "uid": "…", "outcome": "linked" | "already linked" | "moved from <what>"}`.
+The network route does the same on the server when a job reports `done`.
+
+### `POST api/location/<pk>/jobs/usb/`
+
+Record the outcome of a job the browser did itself over USB, so the history is complete.
+
+```json
+{"state": "done", "uid": "04A1B2C3D4E5F6", "tag_type": "ntag215", "protected": true}
+```
+
+`state` is `done`, `failed` or `cancelled`; `kind` (`program` or `wipe`), `overwrite`,
+`error` and `error_detail` are optional. Answers 201 with the job.
+
+### `GET api/scanners/`
+
+The network scanners (InvenTree machines of type *NFC Scanner*), with their state.
+
+```json
+[{
+  "id": "79b50fa8-11cd-4430-b239-8069c9e56f06",
+  "name": "Desk scanner",
+  "driver": "nfc-network",
+  "status": "online",
+  "status_text": "last seen 2026-10-06 02:11:51 UTC",
+  "online": true,
+  "last_seen": "2026-10-06T02:11:51.311747+00:00",
+  "last_tag": {"uid": "04AABBCCDDEEFF", "type": "ntag215", "text": "INV-SL1", "uri": null, "protected": true, "error": null, "at": "..."},
+  "location": null
+}]
+```
+
+`status` is one of `online`, `busy` (a job is waiting or writing), `offline`, `unknown`,
+`error`. `last_tag` is the last tap reported outside a job, or null.
+
+### `POST api/jobs/`
+
+Queue a job for a network scanner.
+
+```json
+{"location": 42, "scanner": "79b50fa8-…", "overwrite": false, "kind": "program"}
+```
+
+`kind` is `program` (default) or `wipe`. Answers 201 with the job. 400 when the scanner is
+unknown, inactive, or not a network scanner.
+
+### `GET api/jobs/?location=<pk>&scanner=<id>` and `GET api/jobs/<id>/`
+
+Jobs, newest first (at most 50), or one job:
+
+```json
+{
+  "id": 317, "kind": "program", "location": 42,
+  "scanner": {"id": "79b50fa8-…", "name": "Desk scanner"},
+  "created_by": 1, "created_by_name": "admin",
+  "created_at": "…", "updated_at": "…", "finished_at": null,
+  "state": "waiting", "overwrite": false, "timeout_s": 60,
+  "uid": "", "tag_type": "", "protected": null,
+  "error": "", "error_detail": "", "existing_text": "", "existing_uri": ""
+}
+```
+
+`state` moves through `queued` (not yet collected by the scanner), `sent`, `waiting` (for a
+tag), `writing`, and ends in `done`, `failed` or `cancelled`. A `scanner` of null means a
+USB job. On `failed`, `error` is the scanner's error code; for `not_blank`, `existing_text`
+and `existing_uri` say what the tag already holds, so the user can be asked before
+overwriting. A job whose scanner stops answering fails with `scanner_offline`.
+
+### `POST api/jobs/<id>/cancel/`
+
+A job the scanner has not collected is cancelled at once. One it has collected gets a
+`cancel` command, and ends `cancelled` when the scanner confirms. Answers with the job.
+
+## For a scanner
+
+### `POST sync/`
+
+The scanner's one call: what has happened since last time, and whatever the server has for
+it. The scanner is identified by `reader`, which must match the *Reader ID* setting of an
+active *NFC Scanner* machine with the *Network scanner* driver, and the token must belong
+to the user in that machine's *User* setting.
+
+Request:
+
+```json
+{
+  "reader": "nfc-34b7da52a084",
+  "boot": 17,
+  "proto": 1,
+  "ack": 41,
+  "wait_s": 25,
+  "msgs": [
+    {"seq": 12, "evt": "tag", "uid": "04A1B2C3D4E5F6", "type": "ntag215", "text": "INV-SL4", "protected": true},
+    {"seq": 13, "rsp": "program", "ok": true, "id": 317}
+  ]
+}
+```
+
+| Field | |
+| --- | --- |
+| `reader` | The scanner's id, from its MAC address |
+| `boot` | A number that changes whenever the scanner restarts; its message numbering starts again with it |
+| `proto` | Protocol version; this plugin speaks 1 |
+| `ack` | The highest command `seq` the scanner has acted on |
+| `wait_s` | How long the server may hold this request waiting for a command; 0 answers at once |
+| `msgs` | `rsp` and `evt` objects exactly as the scanner emits them over USB, each with a `seq` |
+
+Response (200):
+
+```json
+{
+  "ack": 13,
+  "cmds": [
+    {"seq": 42, "cmd": "program", "id": 317, "ndef": "9101…", "pwd": "A1B2C3D4", "pack": "1234", "timeout_ms": 60000}
+  ],
+  "poll_ms": 1000
+}
+```
+
+| Field | |
+| --- | --- |
+| `ack` | The highest message `seq` the server has stored from this call |
+| `cmds` | Commands exactly as the scanner takes them over USB, each with a `seq`, oldest first |
+| `poll_ms` | Optional: how soon to call again when idle |
+
+Rules:
+
+- A command stays in `cmds` on every call until the scanner's `ack` covers its `seq`. The
+  scanner ignores a `seq` it has already acted on.
+- A message is applied once: a repeat of the same `(reader, boot, seq)` is acknowledged
+  and ignored.
+- A `program` or `wipe` command's `id` is the job's id; the scanner's `rsp` and events
+  carry it back, and move the job's state.
+- A `tag` event outside a job is kept as the scanner's last tap.
+- With the *Long polling* setting on, a call with nothing to deliver is held, up to
+  `wait_s` or the *Longest hold* setting, whichever is less, and answered as soon as a
+  command is queued. Off, every call is answered at once; a scanner should then wait at
+  least a second between idle calls.
+
+Errors: 401 for a bad token, 403 for a token that is not the machine's user, 404 for a
+`reader` no active machine is configured with, 400 for a malformed body.
+
+The reference client is `tools/sync_bridge.py` in the firmware repository, which drives a
+USB scanner through this exchange.

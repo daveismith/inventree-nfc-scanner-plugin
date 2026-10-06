@@ -1,0 +1,6 @@
+# The local instance's data: database, media, venv, logs
+inventree-data/*
+admin.token
+scanner.token
+machine.id
+!inventree-data/plugins.txt

@@ -1,0 +1,24 @@
+{
+  "_scanner-Sl5hu9LJ.js": {
+    "file": "assets/scanner-Sl5hu9LJ.js",
+    "name": "scanner"
+  },
+  "src/Dashboard.tsx": {
+    "file": "Dashboard-BZA8mXOu.js",
+    "name": "Dashboard",
+    "src": "src/Dashboard.tsx",
+    "isEntry": true,
+    "imports": [
+      "_scanner-Sl5hu9LJ.js"
+    ]
+  },
+  "src/Panel.tsx": {
+    "file": "Panel-BJB200ka.js",
+    "name": "Panel",
+    "src": "src/Panel.tsx",
+    "isEntry": true,
+    "imports": [
+      "_scanner-Sl5hu9LJ.js"
+    ]
+  }
+}

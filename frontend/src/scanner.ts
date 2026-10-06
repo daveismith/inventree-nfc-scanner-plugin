@@ -10,15 +10,23 @@
  *
  * It holds the port only while the tab is visible, and in one tab at a time.
  */
-import { type LinkState, type ScannerMessage, ScannerLink, grantedPort, hasWebSerial, locationFromUri, requestPort } from './serial';
+import {
+  grantedPort,
+  hasWebSerial,
+  type LinkState,
+  locationFromUri,
+  requestPort,
+  ScannerLink,
+  type ScannerMessage
+} from './serial';
 
 type Navigate = (path: string) => void;
 
 export interface ScannerState {
   link: LinkState;
-  info: ScannerMessage | null;      // the scanner's `info`, once connected
-  onReader: ScannerMessage | null;  // the tag on the reader, from `tag` events
-  jobActive: boolean;               // a job is running from some panel: taps are its business
+  info: ScannerMessage | null; // the scanner's `info`, once connected
+  onReader: ScannerMessage | null; // the tag on the reader, from `tag` events
+  jobActive: boolean; // a job is running from some panel: taps are its business
 }
 
 class ScannerService {
@@ -28,7 +36,12 @@ class ScannerService {
   private started = false;
   private connecting = false;
 
-  state: ScannerState = { link: 'closed', info: null, onReader: null, jobActive: false };
+  state: ScannerState = {
+    link: 'closed',
+    info: null,
+    onReader: null,
+    jobActive: false
+  };
 
   /** React-style subscription (for useSyncExternalStore). */
   subscribe = (listener: () => void) => {
@@ -64,7 +77,11 @@ class ScannerService {
   private ensureLink(): ScannerLink {
     if (!this.link) {
       this.link = new ScannerLink();
-      this.link.onState = (link) => this.set({ link, ...(link === 'closed' ? { info: null, onReader: null } : {}) });
+      this.link.onState = (link) =>
+        this.set({
+          link,
+          ...(link === 'closed' ? { info: null, onReader: null } : {})
+        });
       this.link.onMessage = (msg) => this.onMessage(msg);
     }
     return this.link;
@@ -76,7 +93,12 @@ class ScannerService {
 
   /** Open a port the user granted earlier, if the tab is visible and nothing is open. */
   async reconnect() {
-    if (document.visibilityState !== 'visible' || this.isOpen || this.connecting) return;
+    if (
+      document.visibilityState !== 'visible' ||
+      this.isOpen ||
+      this.connecting
+    )
+      return;
     const port = await grantedPort();
     if (port) await this.connect(port);
   }
@@ -109,12 +131,14 @@ class ScannerService {
 
   /** Send a command and wait for its answer. */
   request(cmd: ScannerMessage, timeoutMs?: number): Promise<ScannerMessage> {
-    if (!this.link?.isOpen) return Promise.reject(new Error('scanner not connected'));
+    if (!this.link?.isOpen)
+      return Promise.reject(new Error('scanner not connected'));
     return this.link.request(cmd, timeoutMs);
   }
 
   send(cmd: ScannerMessage): Promise<void> {
-    if (!this.link?.isOpen) return Promise.reject(new Error('scanner not connected'));
+    if (!this.link?.isOpen)
+      return Promise.reject(new Error('scanner not connected'));
     return this.link.send(cmd);
   }
 

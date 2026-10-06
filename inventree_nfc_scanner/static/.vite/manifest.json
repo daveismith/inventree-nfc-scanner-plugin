@@ -1,24 +1,24 @@
 {
-  "_scanner-Sl5hu9LJ.js": {
-    "file": "assets/scanner-Sl5hu9LJ.js",
+  "_scanner-ClV9pOpG.js": {
+    "file": "assets/scanner-ClV9pOpG.js",
     "name": "scanner"
   },
   "src/Dashboard.tsx": {
-    "file": "Dashboard-BZA8mXOu.js",
+    "file": "Dashboard-CqLvaUfI.js",
     "name": "Dashboard",
     "src": "src/Dashboard.tsx",
     "isEntry": true,
     "imports": [
-      "_scanner-Sl5hu9LJ.js"
+      "_scanner-ClV9pOpG.js"
     ]
   },
   "src/Panel.tsx": {
-    "file": "Panel-BJB200ka.js",
+    "file": "Panel-BihnLdOO.js",
     "name": "Panel",
     "src": "src/Panel.tsx",
     "isEntry": true,
     "imports": [
-      "_scanner-Sl5hu9LJ.js"
+      "_scanner-ClV9pOpG.js"
     ]
   }
 }

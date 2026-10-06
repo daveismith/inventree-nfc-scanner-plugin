@@ -11,6 +11,8 @@ The contract is in docs/api.md. The rules that matter:
   command appears or the scanner's `wait_s` runs out.
 """
 
+from __future__ import annotations
+
 import datetime
 import logging
 import time
@@ -155,8 +157,8 @@ def handle_sync(machine: NfcScannerMachine, body: dict, *, long_poll_max_s: int)
         if fresh:
             try:
                 apply_message(machine, msg)
-            except Exception as exc:  # noqa: BLE001 - one bad message must not stall the exchange
-                logger.exception('NFC scanner %s: message %s not applied: %s', config.pk, msg, exc)
+            except Exception:  # one bad message must not stall the exchange
+                logger.exception('NFC scanner %s: message %s not applied', config.pk, msg)
 
     # 3. Hand out what is waiting; hold the call for more if asked and allowed.
     deadline = time.monotonic() + wait_s

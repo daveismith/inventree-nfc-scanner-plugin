@@ -261,7 +261,8 @@ def main():
     ap.add_argument('--host', default='inventree.localhost:8080')
     args = ap.parse_args()
     try:
-        admin = open(os.path.join(HERE, 'admin.token')).read().strip()
+        with open(os.path.join(HERE, 'admin.token')) as f:
+            admin = f.read().strip()
     except FileNotFoundError:
         sys.exit('run setup.sh first (it writes admin.token)')
     api = Api(args.base, args.host)

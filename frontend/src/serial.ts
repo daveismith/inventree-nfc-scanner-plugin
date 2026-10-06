@@ -19,7 +19,9 @@ declare global {
   }
   interface Serial extends EventTarget {
     getPorts(): Promise<SerialPort[]>;
-    requestPort(options?: { filters: { usbVendorId: number; usbProductId?: number }[] }): Promise<SerialPort>;
+    requestPort(options?: {
+      filters: { usbVendorId: number; usbProductId?: number }[];
+    }): Promise<SerialPort>;
   }
   interface Navigator {
     serial?: Serial;
@@ -52,7 +54,9 @@ export async function grantedPort(): Promise<SerialPort | null> {
 
 /** Ask the user for the scanner (needs a click). */
 export async function requestPort(): Promise<SerialPort> {
-  return navigator.serial!.requestPort({ filters: [{ usbVendorId: USB_VENDOR, usbProductId: USB_PRODUCT }] });
+  return navigator.serial!.requestPort({
+    filters: [{ usbVendorId: USB_VENDOR, usbProductId: USB_PRODUCT }]
+  });
 }
 
 export class ScannerLink {
@@ -60,7 +64,11 @@ export class ScannerLink {
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private releaseLock: (() => void) | null = null;
-  private waiters: { cmd: string; resolve: (m: ScannerMessage) => void; timer: number }[] = [];
+  private waiters: {
+    cmd: string;
+    resolve: (m: ScannerMessage) => void;
+    timer: number;
+  }[] = [];
 
   state: LinkState = 'closed';
   onMessage: (msg: ScannerMessage) => void = () => {};
@@ -79,7 +87,7 @@ export class ScannerLink {
 
   async open(port: SerialPort, steal = false): Promise<boolean> {
     if (this.port) return true;
-    if (this.opening) return this.opening;      // a second caller joins the first
+    if (this.opening) return this.opening; // a second caller joins the first
     this.opening = this.doOpen(port, steal).finally(() => {
       this.opening = null;
     });
@@ -93,17 +101,21 @@ export class ScannerLink {
     if (locks?.request) {
       const got = await new Promise<boolean>((resolveGot) => {
         locks
-          .request(LOCK_NAME, { ifAvailable: !steal, steal }, (lock: unknown) => {
-            if (!lock) {
-              resolveGot(false);
-              return;
+          .request(
+            LOCK_NAME,
+            { ifAvailable: !steal, steal },
+            (lock: unknown) => {
+              if (!lock) {
+                resolveGot(false);
+                return;
+              }
+              resolveGot(true);
+              // Held until release() is called, or the lock is stolen (the promise rejects).
+              return new Promise<void>((release) => {
+                this.releaseLock = release;
+              });
             }
-            resolveGot(true);
-            // Held until release() is called, or the lock is stolen (the promise rejects).
-            return new Promise<void>((release) => {
-              this.releaseLock = release;
-            });
-          })
+          )
           .catch(() => {
             // Stolen by another tab: let go of the port.
             this.releaseLock = null;
@@ -134,7 +146,7 @@ export class ScannerLink {
 
   async close(): Promise<void> {
     if (this.opening) {
-      await this.opening.catch(() => {});       // let it finish, then close what it opened
+      await this.opening.catch(() => {}); // let it finish, then close what it opened
     }
     const port = this.port;
     this.port = null;
@@ -159,7 +171,9 @@ export class ScannerLink {
 
   async send(obj: ScannerMessage): Promise<void> {
     if (!this.writer) throw new Error('scanner not connected');
-    await this.writer.write(new TextEncoder().encode(`${JSON.stringify(obj)}\n`));
+    await this.writer.write(
+      new TextEncoder().encode(`${JSON.stringify(obj)}\n`)
+    );
   }
 
   /** Send a command and wait for its `rsp`. Events arriving meanwhile still go to onMessage. */
@@ -199,8 +213,11 @@ export class ScannerLink {
         const { value, done } = await this.reader.read();
         if (done) break;
         pending += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = pending.indexOf('\n')) >= 0) {
+        for (
+          let nl = pending.indexOf('\n');
+          nl >= 0;
+          nl = pending.indexOf('\n')
+        ) {
           const line = pending.slice(0, nl).trim();
           pending = pending.slice(nl + 1);
           if (!line) continue;

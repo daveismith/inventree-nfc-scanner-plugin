@@ -7,6 +7,8 @@ to the plugin (`/sync`), and the driver's job is to find the machine a call belo
 to keep its status current.
 """
 
+from __future__ import annotations
+
 import datetime
 
 from django.utils.translation import gettext_lazy as _

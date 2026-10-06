@@ -16,8 +16,7 @@ def holders_of(barcode_hash: str):
     for model in apps.get_models():
         if not issubclass(model, InvenTreeBarcodeMixin) or model._meta.abstract:
             continue
-        for obj in model.objects.filter(barcode_hash=barcode_hash):
-            yield obj
+        yield from model.objects.filter(barcode_hash=barcode_hash)
 
 
 def link_uid(location, uid: str) -> str:

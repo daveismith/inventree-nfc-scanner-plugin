@@ -5,25 +5,46 @@
  * WebSerial, or a network scanner the server drives. Both end with the tag's UID linked to
  * the location as its barcode. The USB connection lives in scanner.ts and outlives this panel.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Alert, Badge, Button, Group, Select, Stack, Table, Text } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
-import { checkPluginVersion, type InvenTreePluginContext } from '@inventreedb/ui';
 
 import {
-  type Job,
-  type Scanner,
+  checkPluginVersion,
+  type InvenTreePluginContext
+} from '@inventreedb/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Select,
+  Stack,
+  Table,
+  Text
+} from '@mantine/core';
+import { notifications } from '@mantine/notifications';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore
+} from 'react';
+
+import {
   cancelJob,
   createJob,
   getJob,
   getJobs,
   getScanners,
   getTag,
+  type Job,
   linkBarcode,
   recordUsbJob,
+  type Scanner,
+  type TagPayload
 } from './api';
 import { scanner } from './scanner';
-import { type ScannerMessage, hasWebSerial } from './serial';
+import { hasWebSerial, type ScannerMessage } from './serial';
 
 interface PanelContext {
   location: number | string;
@@ -49,7 +70,7 @@ const STATE_COLOR: Record<string, string> = {
   waiting: 'yellow',
   writing: 'blue',
   queued: 'gray',
-  sent: 'gray',
+  sent: 'gray'
 };
 
 function describe(job: Job): string {
@@ -72,7 +93,11 @@ function describe(job: Job): string {
 }
 
 const report = (e: any) => {
-  notifications.show({ title: 'Scanner', message: e?.message ?? String(e), color: 'red' });
+  notifications.show({
+    title: 'Scanner',
+    message: e?.message ?? String(e),
+    color: 'red'
+  });
 };
 
 function NfcPanel({ context }: { context: InvenTreePluginContext }) {
@@ -93,13 +118,21 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   const [netJob, setNetJob] = useState<Job | null>(null);
 
   // --- shared
-  const [progress, setProgress] = useState<Progress>({ stage: 'idle', text: '' });
+  const [progress, setProgress] = useState<Progress>({
+    stage: 'idle',
+    text: ''
+  });
   const [history, setHistory] = useState<Job[]>([]);
-  const busy = progress.stage === 'queued' || progress.stage === 'waiting' || progress.stage === 'writing';
+  const busy =
+    progress.stage === 'queued' ||
+    progress.stage === 'waiting' ||
+    progress.stage === 'writing';
   const lastRoute = useRef<'usb' | 'net'>('usb');
 
   const refreshHistory = useCallback(() => {
-    getJobs(api, location).then(setHistory).catch(() => {});
+    getJobs(api, location)
+      .then(setHistory)
+      .catch(() => {});
   }, [api, location]);
 
   useEffect(() => {
@@ -108,7 +141,10 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       .then((list) => {
         setScanners(list);
         const remembered = localStorage.getItem('nfc-scanner');
-        const first = list.find((s) => s.id === remembered) ?? list.find((s) => s.online) ?? list[0];
+        const first =
+          list.find((s) => s.id === remembered) ??
+          list.find((s) => s.online) ??
+          list[0];
         if (first) setScannerId(first.id);
       })
       .catch(() => {});
@@ -130,42 +166,66 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       if (done) {
         try {
           const { outcome } = await linkBarcode(api, location, final.uid);
-          setProgress({ stage: 'done', text: `done: ${final.uid}${final.protected ? ', protected' : ''}; UID ${outcome}`, uid: final.uid });
+          setProgress({
+            stage: 'done',
+            text: `done: ${final.uid}${final.protected ? ', protected' : ''}; UID ${outcome}`,
+            uid: final.uid
+          });
         } catch (e: any) {
           const detail = e?.response?.data;
-          setProgress({ stage: 'done', text: `tag written (${final.uid}), but the barcode link failed: ${detail ? JSON.stringify(detail) : e.message}` });
+          setProgress({
+            stage: 'done',
+            text: `tag written (${final.uid}), but the barcode link failed: ${detail ? JSON.stringify(detail) : e.message}`
+          });
         }
       } else {
-        setProgress({ stage: 'failed', text: `failed: ${final.error}`, error: final.error, existing: final.text });
+        setProgress({
+          stage: 'failed',
+          text: `failed: ${final.error}`,
+          error: final.error,
+          existing: final.text
+        });
       }
       recordUsbJob(api, location, {
-        state: done ? 'done' : final.error === 'cancelled' ? 'cancelled' : 'failed',
+        state: done
+          ? 'done'
+          : final.error === 'cancelled'
+            ? 'cancelled'
+            : 'failed',
         overwrite,
         uid: final.uid ?? '',
         tag_type: final.type ?? '',
         protected: final.protected ?? null,
         error: final.error ?? '',
-        error_detail: final.detail ?? '',
+        error_detail: final.detail ?? ''
       })
         .then(refreshHistory)
         .catch(() => {});
     },
-    [api, location, refreshHistory],
+    [api, location, refreshHistory]
   );
 
   const programUsb = useCallback(
     async (overwrite: boolean) => {
       if (!scanner.isOpen) return;
       setProgress({ stage: 'queued', text: 'fetching the tag data' });
-      let tag;
+      let tag: TagPayload;
       try {
         tag = await getTag(api, location);
       } catch (e: any) {
-        setProgress({ stage: 'failed', text: e?.response?.data?.base_url ?? e.message });
+        setProgress({
+          stage: 'failed',
+          text: e?.response?.data?.base_url ?? e.message
+        });
         return;
       }
       const id = Date.now() % 1000000;
-      const cmd: ScannerMessage = { cmd: 'program', id, ndef: tag.ndef, timeout_ms: tag.timeout_s * 1000 };
+      const cmd: ScannerMessage = {
+        cmd: 'program',
+        id,
+        ndef: tag.ndef,
+        timeout_ms: tag.timeout_s * 1000
+      };
       if (overwrite) cmd.overwrite = true;
       if (tag.pwd) {
         cmd.pwd = tag.pwd;
@@ -177,15 +237,27 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       const final = new Promise<ScannerMessage>((resolve) => {
         unsubscribe = scanner.onEachMessage((msg) => {
           if (msg.id !== id) return;
-          if (msg.evt === 'waiting') setProgress({ stage: 'waiting', text: 'present the tag to the scanner' });
-          if (msg.evt === 'writing') setProgress({ stage: 'writing', text: `writing ${msg.uid}: hold still` });
+          if (msg.evt === 'waiting')
+            setProgress({
+              stage: 'waiting',
+              text: 'present the tag to the scanner'
+            });
+          if (msg.evt === 'writing')
+            setProgress({
+              stage: 'writing',
+              text: `writing ${msg.uid}: hold still`
+            });
           if (msg.evt === 'done' || msg.evt === 'failed') resolve(msg);
         });
       });
       try {
         const rsp = await scanner.request(cmd);
         if (!rsp.ok) {
-          setProgress({ stage: 'failed', text: `refused: ${rsp.error}`, error: rsp.error });
+          setProgress({
+            stage: 'failed',
+            text: `refused: ${rsp.error}`,
+            error: rsp.error
+          });
           return;
         }
         await finishUsb(await final, overwrite);
@@ -196,7 +268,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
         scanner.setJobActive(false);
       }
     },
-    [api, location, finishUsb],
+    [api, location, finishUsb]
   );
 
   const cancelUsb = useCallback(() => {
@@ -210,27 +282,48 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       if (!scannerId) return;
       localStorage.setItem('nfc-scanner', scannerId);
       try {
-        const job = await createJob(api, { location, scanner: scannerId, overwrite });
+        const job = await createJob(api, {
+          location,
+          scanner: scannerId,
+          overwrite
+        });
         setNetJob(job);
         setProgress({ stage: 'queued', text: describe(job) });
       } catch (e: any) {
         const data = e?.response?.data;
-        setProgress({ stage: 'failed', text: data ? JSON.stringify(data) : e.message });
+        setProgress({
+          stage: 'failed',
+          text: data ? JSON.stringify(data) : e.message
+        });
       }
     },
-    [api, location, scannerId],
+    [api, location, scannerId]
   );
 
   useEffect(() => {
-    if (!netJob || ['done', 'failed', 'cancelled'].includes(netJob.state)) return;
+    if (!netJob || ['done', 'failed', 'cancelled'].includes(netJob.state))
+      return;
     const timer = window.setInterval(async () => {
       try {
         const job = await getJob(api, netJob.id);
         setNetJob(job);
         const stage: Stage =
-          job.state === 'done' ? 'done' : job.state === 'failed' || job.state === 'cancelled' ? 'failed' : job.state === 'queued' || job.state === 'sent' ? 'queued' : job.state;
-        setProgress({ stage, text: describe(job), uid: job.uid, error: job.error, existing: job.existing_text });
-        if (['done', 'failed', 'cancelled'].includes(job.state)) refreshHistory();
+          job.state === 'done'
+            ? 'done'
+            : job.state === 'failed' || job.state === 'cancelled'
+              ? 'failed'
+              : job.state === 'queued' || job.state === 'sent'
+                ? 'queued'
+                : job.state;
+        setProgress({
+          stage,
+          text: describe(job),
+          uid: job.uid,
+          error: job.error,
+          existing: job.existing_text
+        });
+        if (['done', 'failed', 'cancelled'].includes(job.state))
+          refreshHistory();
       } catch {
         /* keep polling */
       }
@@ -239,13 +332,17 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   }, [api, netJob, refreshHistory]);
 
   const cancelNet = useCallback(() => {
-    if (netJob) cancelJob(api, netJob.id).then(setNetJob).catch(() => {});
+    if (netJob)
+      cancelJob(api, netJob.id)
+        .then(setNetJob)
+        .catch(() => {});
   }, [api, netJob]);
 
   // --- rendering
 
   const usbReady = usb.link === 'open';
-  const canOverwrite = progress.stage === 'failed' && progress.error === 'not_blank';
+  const canOverwrite =
+    progress.stage === 'failed' && progress.error === 'not_blank';
 
   const start = (overwrite: boolean, route: 'usb' | 'net') => {
     lastRoute.current = route;
@@ -253,41 +350,57 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   };
 
   const scannerOptions = useMemo(
-    () => scanners.map((s) => ({ value: s.id, label: `${s.name}${s.online ? '' : ' (offline)'}` })),
-    [scanners],
+    () =>
+      scanners.map((s) => ({
+        value: s.id,
+        label: `${s.name}${s.online ? '' : ' (offline)'}`
+      })),
+    [scanners]
   );
 
   if (!ctx.can_program) {
-    return <Text c="dimmed">You need permission to change stock locations to program tags.</Text>;
+    return (
+      <Text c='dimmed'>
+        You need permission to change stock locations to program tags.
+      </Text>
+    );
   }
 
   return (
-    <Stack gap="md">
+    <Stack gap='md'>
       {/* USB */}
-      <Stack gap="xs">
-        <Group justify="space-between">
+      <Stack gap='xs'>
+        <Group justify='space-between'>
           <Text fw={600}>Scanner on this computer</Text>
           {!hasWebSerial() ? (
-            <Badge color="gray">this browser has no WebSerial</Badge>
+            <Badge color='gray'>this browser has no WebSerial</Badge>
           ) : usb.link === 'open' ? (
-            <Badge color="green">connected{usb.info?.pn532 ? '' : ', no reader'}</Badge>
+            <Badge color='green'>
+              connected{usb.info?.pn532 ? '' : ', no reader'}
+            </Badge>
           ) : usb.link === 'busy-elsewhere' ? (
-            <Badge color="yellow">in use by another tab or window</Badge>
+            <Badge color='yellow'>in use by another tab or window</Badge>
           ) : usb.link === 'opening' ? (
-            <Badge color="gray">connecting</Badge>
+            <Badge color='gray'>connecting</Badge>
           ) : (
-            <Badge color="gray">not connected</Badge>
+            <Badge color='gray'>not connected</Badge>
           )}
         </Group>
         {hasWebSerial() && (
           <Group>
             {usb.link === 'closed' && (
-              <Button variant="default" onClick={() => scanner.chooseScanner().catch(() => {})}>
+              <Button
+                variant='default'
+                onClick={() => scanner.chooseScanner().catch(() => {})}
+              >
                 Connect scanner
               </Button>
             )}
             {usb.link === 'busy-elsewhere' && (
-              <Button variant="default" onClick={() => scanner.takeOver().catch(report)}>
+              <Button
+                variant='default'
+                onClick={() => scanner.takeOver().catch(report)}
+              >
                 Take over
               </Button>
             )}
@@ -297,36 +410,49 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
               </Button>
             )}
             {usbReady && busy && lastRoute.current === 'usb' && (
-              <Button variant="subtle" color="red" onClick={cancelUsb}>
+              <Button variant='subtle' color='red' onClick={cancelUsb}>
                 Cancel
               </Button>
             )}
           </Group>
         )}
         {usbReady && usb.onReader && (
-          <Text size="sm" c="dimmed">
+          <Text size='sm' c='dimmed'>
             On the reader: {usb.onReader.uid}
-            {usb.onReader.text ? ` holding ${usb.onReader.text}` : usb.onReader.type ? ` (${usb.onReader.type}, blank)` : ''}
+            {usb.onReader.text
+              ? ` holding ${usb.onReader.text}`
+              : usb.onReader.type
+                ? ` (${usb.onReader.type}, blank)`
+                : ''}
             {usb.onReader.protected ? ', protected' : ''}
           </Text>
         )}
       </Stack>
 
       {/* Network */}
-      <Stack gap="xs">
+      <Stack gap='xs'>
         <Text fw={600}>Scanner on the network</Text>
         {scanners.length === 0 ? (
-          <Text size="sm" c="dimmed">
+          <Text size='sm' c='dimmed'>
             No network scanners are configured (Admin Center → Machines).
           </Text>
         ) : (
-          <Group align="end">
-            <Select data={scannerOptions} value={scannerId} onChange={setScannerId} label="Scanner" w={260} />
-            <Button onClick={() => start(false, 'net')} disabled={busy || !scannerId}>
+          <Group align='end'>
+            <Select
+              data={scannerOptions}
+              value={scannerId}
+              onChange={setScannerId}
+              label='Scanner'
+              w={260}
+            />
+            <Button
+              onClick={() => start(false, 'net')}
+              disabled={busy || !scannerId}
+            >
               Program tag
             </Button>
             {busy && lastRoute.current === 'net' && (
-              <Button variant="subtle" color="red" onClick={cancelNet}>
+              <Button variant='subtle' color='red' onClick={cancelNet}>
                 Cancel
               </Button>
             )}
@@ -337,15 +463,33 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       {/* Progress */}
       {progress.stage !== 'idle' && (
         <Alert
-          color={progress.stage === 'done' ? 'green' : progress.stage === 'failed' ? 'red' : 'blue'}
-          title={progress.stage === 'done' ? 'Programmed' : progress.stage === 'failed' ? 'Not programmed' : 'Programming'}
+          color={
+            progress.stage === 'done'
+              ? 'green'
+              : progress.stage === 'failed'
+                ? 'red'
+                : 'blue'
+          }
+          title={
+            progress.stage === 'done'
+              ? 'Programmed'
+              : progress.stage === 'failed'
+                ? 'Not programmed'
+                : 'Programming'
+          }
         >
-          <Stack gap="xs">
+          <Stack gap='xs'>
             <Text>{progress.text}</Text>
             {canOverwrite && (
               <Group>
-                <Text size="sm">The tag already holds a message. Replace it?</Text>
-                <Button size="xs" color="orange" onClick={() => start(true, lastRoute.current)}>
+                <Text size='sm'>
+                  The tag already holds a message. Replace it?
+                </Text>
+                <Button
+                  size='xs'
+                  color='orange'
+                  onClick={() => start(true, lastRoute.current)}
+                >
                   Overwrite
                 </Button>
               </Group>
@@ -355,14 +499,15 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
       )}
 
       {ctx.has_password ? null : (
-        <Text size="xs" c="dimmed">
-          No tag password is set, so tags are left unprotected (plugin settings → Tag password).
+        <Text size='xs' c='dimmed'>
+          No tag password is set, so tags are left unprotected (plugin settings
+          → Tag password).
         </Text>
       )}
 
       {/* History */}
       {history.length > 0 && (
-        <Table withTableBorder={false} verticalSpacing="xs" fz="sm">
+        <Table withTableBorder={false} verticalSpacing='xs' fz='sm'>
           <Table.Thead>
             <Table.Tr>
               <Table.Th>When</Table.Th>
@@ -378,7 +523,10 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
                 <Table.Td>{job.created_by_name ?? ''}</Table.Td>
                 <Table.Td>{job.scanner?.name ?? 'USB'}</Table.Td>
                 <Table.Td>
-                  <Badge color={STATE_COLOR[job.state] ?? 'gray'} variant="light">
+                  <Badge
+                    color={STATE_COLOR[job.state] ?? 'gray'}
+                    variant='light'
+                  >
                     {job.state}
                   </Badge>{' '}
                   {job.uid || job.error}

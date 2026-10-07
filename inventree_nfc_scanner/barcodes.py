@@ -17,9 +17,9 @@ from django.db import transaction
 from InvenTree.helpers import hash_barcode
 from InvenTree.models import InvenTreeBarcodeMixin
 
-logger = logging.getLogger('inventree')
+logger = logging.getLogger("inventree")
 
-UID_RE = re.compile(r'^[0-9A-F]{8,20}$')
+UID_RE = re.compile(r"^[0-9A-F]{8,20}$")
 
 
 class BadUid(ValueError):
@@ -32,9 +32,9 @@ class NotPermitted(PermissionError):
 
 def clean_uid(value) -> str:
     """The UID as upper-case hex, or raise BadUid."""
-    uid = str(value or '').strip().upper()
+    uid = str(value or "").strip().upper()
     if not UID_RE.match(uid):
-        raise BadUid('the tag UID, as 8 to 20 hex digits')
+        raise BadUid("the tag UID, as 8 to 20 hex digits")
     return uid
 
 
@@ -48,7 +48,7 @@ def holders_of(barcode_hash: str):
 
 def _may_change(actor, obj) -> bool:
     opts = obj._meta
-    return bool(actor and actor.has_perm(f'{opts.app_label}.change_{opts.model_name}'))
+    return bool(actor and actor.has_perm(f"{opts.app_label}.change_{opts.model_name}"))
 
 
 def link_uid(location, uid, actor) -> str:
@@ -60,7 +60,7 @@ def link_uid(location, uid, actor) -> str:
     uid = clean_uid(uid)
     barcode_hash = hash_barcode(uid)
     if location.barcode_hash == barcode_hash:
-        return 'already linked'
+        return "already linked"
 
     with transaction.atomic():
         moved_from = []
@@ -68,15 +68,25 @@ def link_uid(location, uid, actor) -> str:
             if other == location:
                 continue
             if not _may_change(actor, other):
-                raise NotPermitted(f'the tag is the barcode of {other._meta.verbose_name} {other}, which you may not change')
-            moved_from.append(f'{other._meta.verbose_name} {other}')
+                raise NotPermitted(
+                    f"the tag is the barcode of {other._meta.verbose_name} {other}, which you may not change"
+                )
+            moved_from.append(f"{other._meta.verbose_name} {other}")
             other.unassign_barcode()
 
-        location.assign_barcode(barcode_hash=barcode_hash, barcode_data=uid, raise_error=True)
+        location.assign_barcode(
+            barcode_hash=barcode_hash, barcode_data=uid, raise_error=True
+        )
 
-    who = getattr(actor, 'username', None) or 'the scanner'
+    who = getattr(actor, "username", None) or "the scanner"
     if moved_from:
-        logger.info('NFC: %s moved barcode %s to location %s from %s', who, uid, location.pk, ', '.join(moved_from))
-        return f'moved from {", ".join(moved_from)}'
-    logger.info('NFC: %s linked barcode %s to location %s', who, uid, location.pk)
-    return 'linked'
+        logger.info(
+            "NFC: %s moved barcode %s to location %s from %s",
+            who,
+            uid,
+            location.pk,
+            ", ".join(moved_from),
+        )
+        return f"moved from {', '.join(moved_from)}"
+    logger.info("NFC: %s linked barcode %s to location %s", who, uid, location.pk)
+    return "linked"

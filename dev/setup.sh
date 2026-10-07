@@ -11,40 +11,48 @@ HOST="Host: ${INVENTREE_SITE_URL#http://}"
 AUTH="$INVENTREE_ADMIN_USER:$INVENTREE_ADMIN_PASSWORD"
 
 say() { printf '%s\n' "$*"; }
+fail() { say "$*"; exit 1; }
+
+# A PATCH or GET that must succeed: -f makes a 4xx or 5xx an error, which set -e stops on.
+api() { curl -sf -o /dev/null -u "$AUTH" -H "$HOST" -H 'Content-Type: application/json' "$@"; }
+
+wait_for() {
+    # $1: what we wait for (for the message); the rest: a curl command that must succeed
+    what="$1"; shift
+    for i in $(seq 1 60); do
+        if "$@" > /dev/null 2>&1; then return 0; fi
+        sleep 5
+    done
+    fail "gave up waiting for $what; see: docker compose logs inventree-server"
+}
 
 say "waiting for InvenTree at $INVENTREE_SITE_URL ..."
-for i in $(seq 1 60); do
-    if curl -s -o /dev/null -H "$HOST" "$BASE/api/"; then break; fi
-    sleep 5
-done
+wait_for "the API" curl -sf -o /dev/null -H "$HOST" "$BASE/api/"
 
 say "enabling plugin integrations"
 for key in ENABLE_PLUGINS_URL ENABLE_PLUGINS_APP ENABLE_PLUGINS_INTERFACE ENABLE_PLUGINS_EVENTS ENABLE_PLUGINS_SCHEDULE; do
-    curl -s -o /dev/null -u "$AUTH" -H "$HOST" -H 'Content-Type: application/json' \
-        -X PATCH "$BASE/api/settings/global/$key/" -d '{"value":"True"}'
+    api -X PATCH "$BASE/api/settings/global/$key/" -d '{"value":"True"}' || fail "could not set $key"
 done
-curl -s -o /dev/null -u "$AUTH" -H "$HOST" -H 'Content-Type: application/json' \
-    -X PATCH "$BASE/api/settings/global/INVENTREE_BASE_URL/" -d "{\"value\":\"$INVENTREE_SITE_URL\"}"
-
-say "activating the plugin"
-curl -s -o /dev/null -u "$AUTH" -H "$HOST" -H 'Content-Type: application/json' \
-    -X PATCH "$BASE/api/plugins/nfcscanner/activate/" -d '{"active":true}'
+api -X PATCH "$BASE/api/settings/global/INVENTREE_BASE_URL/" -d "{\"value\":\"$INVENTREE_SITE_URL\"}" || fail "could not set the base URL"
 
 say "an admin API token, in admin.token"
-curl -s -u "$AUTH" -H "$HOST" "$BASE/api/user/token/?name=nfc-dev-admin" \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])' > admin.token
+curl -sf -u "$AUTH" -H "$HOST" "$BASE/api/user/token/?name=nfc-dev-admin" \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])' > admin.token || fail "could not get a token"
 
 say "collecting static files (the web UI's own, and the plugins')"
-docker compose exec -T inventree-server invoke static > /dev/null
+docker compose exec -T inventree-server invoke static > /dev/null || fail "invoke static failed"
 
-say "restarting the server and worker so the plugin's app is loaded"
+# The server process that came up with `docker compose up` cannot see the plugin until it
+# restarts (the editable install lands after it starts), so the restart comes before the
+# activation, which would otherwise answer 404.
+say "restarting the server and worker so the plugin's module is loaded"
 docker compose restart inventree-server inventree-worker > /dev/null
-for i in $(seq 1 60); do
-    if curl -s -o /dev/null -H "$HOST" -H "Authorization: Token $(cat admin.token)" "$BASE/plugin/nfcscanner/api/scanners/"; then
-        say "ready: $INVENTREE_SITE_URL (login $INVENTREE_ADMIN_USER / $INVENTREE_ADMIN_PASSWORD)"
-        exit 0
-    fi
-    sleep 5
-done
-say "the server did not come back; see: docker compose logs inventree-server"
-exit 1
+wait_for "the server to come back" curl -sf -o /dev/null -H "$HOST" "$BASE/api/"
+
+say "activating the plugin"
+api -X PATCH "$BASE/api/plugins/nfcscanner/activate/" -d '{"active":true}' || fail "could not activate the plugin"
+
+say "restarting once more so the plugin's URLs, tables and panels are served"
+docker compose restart inventree-server inventree-worker > /dev/null
+wait_for "the plugin's API" curl -sf -o /dev/null -H "$HOST" -H "Authorization: Token $(cat admin.token)" "$BASE/plugin/nfcscanner/api/scanners/"
+say "ready: $INVENTREE_SITE_URL (login $INVENTREE_ADMIN_USER / the password in dev/.env)"

@@ -17,25 +17,25 @@ from django.utils.translation import gettext_lazy as _
 from generic.states import ColorEnum
 from machine.machine_type import BaseDriver, BaseMachineType, MachineStatus
 
-logger = logging.getLogger('inventree')
+logger = logging.getLogger("inventree")
 
-MACHINE_TYPE = 'nfc-scanner'
-NETWORK_DRIVER = 'nfc-network'
+MACHINE_TYPE = "nfc-scanner"
+NETWORK_DRIVER = "nfc-network"
 
 # Keys in the machine's shared state (visible to every server process).
-STATE_LAST_SEEN = 'nfc_last_seen'  # ISO 8601 UTC of the last /sync
-STATE_LAST_BOOT = 'nfc_last_boot'
-STATE_LAST_TAG = 'nfc_last_tag'  # the last `tag` event outside a job, as a dict
+STATE_LAST_SEEN = "nfc_last_seen"  # ISO 8601 UTC of the last /sync
+STATE_LAST_BOOT = "nfc_last_boot"
+STATE_LAST_TAG = "nfc_last_tag"  # the last `tag` event outside a job, as a dict
 
 
 class NfcScannerStatus(MachineStatus):
     """Status codes for an NFC scanner."""
 
-    ONLINE = 100, _('Online'), ColorEnum.success
-    UNKNOWN = 101, _('Unknown'), ColorEnum.secondary
-    BUSY = 110, _('Busy'), ColorEnum.primary
-    OFFLINE = 400, _('Offline'), ColorEnum.danger
-    ERROR = 500, _('Error'), ColorEnum.danger
+    ONLINE = 100, _("Online"), ColorEnum.success
+    UNKNOWN = 101, _("Unknown"), ColorEnum.secondary
+    BUSY = 110, _("Busy"), ColorEnum.primary
+    OFFLINE = 400, _("Offline"), ColorEnum.danger
+    ERROR = 500, _("Error"), ColorEnum.danger
 
 
 class NfcScannerBaseDriver(BaseDriver):
@@ -48,16 +48,16 @@ class NfcScannerMachine(BaseMachineType):
     """An NFC reader/programmer for the tags on storage bins."""
 
     SLUG = MACHINE_TYPE
-    NAME = _('NFC Scanner')
-    DESCRIPTION = _('Reads and programs the NFC tags on storage bins.')
+    NAME = _("NFC Scanner")
+    DESCRIPTION = _("Reads and programs the NFC tags on storage bins.")
 
     base_driver = NfcScannerBaseDriver
 
     MACHINE_SETTINGS = {
-        'LOCATION': {
-            'name': _('Scanner location'),
-            'description': _('Where this scanner sits (for information only)'),
-            'model': 'stock.stocklocation',
+        "LOCATION": {
+            "name": _("Scanner location"),
+            "description": _("Where this scanner sits (for information only)"),
+            "model": "stock.stocklocation",
         }
     }
 
@@ -96,41 +96,52 @@ class NetworkScannerDriver(NfcScannerBaseDriver):
     """
 
     SLUG = NETWORK_DRIVER
-    NAME = _('Network scanner')
-    DESCRIPTION = _('A scanner on Wi-Fi that polls InvenTree for jobs over HTTPS')
+    NAME = _("Network scanner")
+    DESCRIPTION = _("A scanner on Wi-Fi that polls InvenTree for jobs over HTTPS")
 
     MACHINE_SETTINGS = {
-        'READER_ID': {
-            'name': _('Reader ID'),
-            'description': _('The id the scanner reports, from its MAC address, e.g. nfc-34b7da52a084'),
-            'required': True,
+        "READER_ID": {
+            "name": _("Reader ID"),
+            "description": _(
+                "The id the scanner reports, from its MAC address, e.g. nfc-34b7da52a084"
+            ),
+            "required": True,
         },
-        'USER': {
-            'name': _('User'),
-            'description': _('The user whose API token the scanner calls with'),
-            'model': 'auth.user',
-            'required': True,
+        "USER": {
+            "name": _("User"),
+            "description": _("The user whose API token the scanner calls with"),
+            "model": "auth.user",
+            "required": True,
         },
     }
 
     def init_machine(self, machine: BaseMachineType):
         """A machine starts offline until its scanner calls."""
         machine.set_status(NfcScannerStatus.OFFLINE)
-        machine.set_status_text(str(_('Not heard from yet')))
+        machine.set_status_text(str(_("Not heard from yet")))
 
     def find_by_reader_id(self, reader_id: str) -> NfcScannerMachine | None:
         """The active machine configured with this reader id, if exactly one is."""
-        found = [m for m in self.get_machines(active=True) if m.get_setting('READER_ID', 'D') == reader_id]
+        found = [
+            m
+            for m in self.get_machines(active=True)
+            if m.get_setting("READER_ID", "D") == reader_id
+        ]
         if len(found) > 1:
-            logger.warning('NFC: %d active scanners share the reader id %r; none will sync until that is fixed', len(found), reader_id)
+            logger.warning(
+                "NFC: %d active scanners share the reader id %r; none will sync until that is fixed",
+                len(found),
+                reader_id,
+            )
             return None
         return found[0] if found else None
 
     def shares_user_with(self, machine: NfcScannerMachine) -> list[str]:
         """Other active network scanners configured with the same user, whose token would
         therefore work for this one too. Give each scanner a user of its own."""
-        user = machine.get_setting('USER', 'D')
+        user = machine.get_setting("USER", "D")
         return [
-            m.name for m in self.get_machines(active=True)
-            if m.pk != machine.pk and m.get_setting('USER', 'D') == user
+            m.name
+            for m in self.get_machines(active=True)
+            if m.pk != machine.pk and m.get_setting("USER", "D") == user
         ]

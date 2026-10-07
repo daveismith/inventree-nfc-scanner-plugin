@@ -68,10 +68,23 @@ class ScannerService {
     this.started = true;
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.link?.close();
-      else this.reconnect();
+      else this.reconnect().catch(() => {});
     });
-    navigator.serial?.addEventListener('disconnect', () => this.link?.close());
-    this.reconnect();
+    // Plugged in or out: only the scanner matters, not any other serial device.
+    navigator.serial?.addEventListener('disconnect', (e) => {
+      if (this.port && (e.target as unknown) === this.port) this.link?.close();
+    });
+    navigator.serial?.addEventListener('connect', () => {
+      this.reconnect().catch(() => {});
+    });
+    this.reconnect().catch(() => {});
+  }
+
+  private port: SerialPort | null = null;
+
+  /** The link closed: a job that was running has no scanner any more. */
+  onClose(listener: () => void): () => void {
+    return this.ensureLink().onClose(listener);
   }
 
   private ensureLink(): ScannerLink {
@@ -108,7 +121,20 @@ class ScannerService {
     if (link.isOpen || this.connecting) return;
     this.connecting = true;
     try {
-      if (!(await link.open(port, steal))) return;
+      // Taking the port from another tab: that tab lets go when it loses the lock, which
+      // takes a moment, so an open that fails is tried again briefly.
+      let opened = false;
+      for (let attempt = 0; attempt < (steal ? 6 : 1); attempt++) {
+        try {
+          opened = await link.open(port, steal);
+          break;
+        } catch (e) {
+          if (attempt === (steal ? 5 : 0)) throw e;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
+      if (!opened) return;
+      this.port = port;
       await link.request({ cmd: 'hid', enabled: false }).catch(() => {});
       const info = await link.request({ cmd: 'info' });
       this.set({ info, onReader: info.tag ? { uid: info.tag } : null });

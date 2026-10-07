@@ -27,6 +27,7 @@ jobs:
       - name: Style Checks
         run: |
           ruff check
+          ruff format --check --preview
       - name: Build Plugin
         run: |
           python -m build
@@ -48,3 +49,9 @@ jobs:
           npm ci
           npm run build
           npm run lint
+      - name: The committed bundle must be the one these sources build
+        # An install from git uses inventree_nfc_scanner/static/ as committed; a release
+        # rebuilds it. This keeps the two the same.
+        run: |
+          git diff --exit-code --stat -- inventree_nfc_scanner/static/ \
+            || { echo "::error::inventree_nfc_scanner/static/ is out of date: run 'npm run build' in frontend/ and commit the result"; exit 1; }

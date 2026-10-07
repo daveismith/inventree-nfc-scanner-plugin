@@ -67,8 +67,11 @@ export class ScannerLink {
   private waiters: {
     cmd: string;
     resolve: (m: ScannerMessage) => void;
+    reject: (e: Error) => void;
     timer: number;
   }[] = [];
+  /** Callers waiting for the link to close (a job in progress, say) are told so. */
+  private closeListeners = new Set<() => void>();
 
   state: LinkState = 'closed';
   onMessage: (msg: ScannerMessage) => void = () => {};
@@ -140,18 +143,41 @@ export class ScannerLink {
     this.port = port;
     this.writer = port.writable!.getWriter();
     this.setState('open');
-    this.readLoop();
+    this.readLoopDone = this.readLoop();
     return true;
   }
 
+  private readLoopDone: Promise<void> | null = null;
+
+  private closing: Promise<void> | null = null;
+
   async close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closing = this.doClose().finally(() => {
+      this.closing = null;
+    });
+    return this.closing;
+  }
+
+  private async doClose(): Promise<void> {
     if (this.opening) {
       await this.opening.catch(() => {}); // let it finish, then close what it opened
     }
     const port = this.port;
     this.port = null;
+    // Whoever is waiting for an answer gets one now, not never.
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const w of waiters) {
+      window.clearTimeout(w.timer);
+      w.reject(new Error('scanner disconnected'));
+    }
+    for (const l of this.closeListeners) l();
     try {
-      this.reader?.cancel().catch(() => {});
+      // The port closes only once both streams are unlocked: cancel the read and wait for
+      // readLoop to release its lock, release the writer, then close.
+      if (this.reader) await this.reader.cancel().catch(() => {});
+      await this.readLoopDone?.catch(() => {});
       this.writer?.releaseLock();
       this.writer = null;
       await port?.close();
@@ -160,9 +186,15 @@ export class ScannerLink {
     }
     this.releaseLock?.();
     this.releaseLock = null;
-    for (const w of this.waiters) window.clearTimeout(w.timer);
-    this.waiters = [];
     this.setState('closed');
+  }
+
+  /** Be told when the link closes, for as long as the returned function is not called. */
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener);
+    return () => {
+      this.closeListeners.delete(listener);
+    };
   }
 
   get isOpen(): boolean {
@@ -183,9 +215,10 @@ export class ScannerLink {
         this.waiters = this.waiters.filter((w) => w.timer !== timer);
         reject(new Error(`no answer to ${obj.cmd}`));
       }, timeoutMs);
-      this.waiters.push({ cmd: obj.cmd, resolve, timer });
+      this.waiters.push({ cmd: obj.cmd, resolve, reject, timer });
       this.send(obj).catch((e) => {
         window.clearTimeout(timer);
+        this.waiters = this.waiters.filter((w) => w.timer !== timer);
         reject(e);
       });
     });
@@ -233,7 +266,8 @@ export class ScannerLink {
     } finally {
       this.reader?.releaseLock();
       this.reader = null;
-      if (this.port) this.close();
+      this.readLoopDone = null;
+      if (this.port) this.close(); // the device went away: close the rest
     }
   }
 }

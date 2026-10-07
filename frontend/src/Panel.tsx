@@ -163,6 +163,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   const finishUsb = useCallback(
     async (final: ScannerMessage, overwrite: boolean) => {
       const done = final.evt === 'done';
+      let linkFailure = '';
       if (done) {
         try {
           const { outcome } = await linkBarcode(api, location, final.uid);
@@ -173,9 +174,12 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
           });
         } catch (e: any) {
           const detail = e?.response?.data;
+          linkFailure = detail
+            ? (detail.detail ?? detail.uid ?? JSON.stringify(detail))
+            : e.message;
           setProgress({
-            stage: 'done',
-            text: `tag written (${final.uid}), but the barcode link failed: ${detail ? JSON.stringify(detail) : e.message}`
+            stage: 'failed',
+            text: `tag written (${final.uid}), but the barcode link failed: ${linkFailure}`
           });
         }
       } else {
@@ -186,9 +190,12 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
           existing: final.text
         });
       }
+      // The record says what happened to the bin: a tag written but not linked is a failure.
       recordUsbJob(api, location, {
         state: done
-          ? 'done'
+          ? linkFailure
+            ? 'failed'
+            : 'done'
           : final.error === 'cancelled'
             ? 'cancelled'
             : 'failed',
@@ -196,8 +203,25 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
         uid: final.uid ?? '',
         tag_type: final.type ?? '',
         protected: final.protected ?? null,
-        error: final.error ?? '',
-        error_detail: final.detail ?? ''
+        error: linkFailure ? 'link_failed' : (final.error ?? ''),
+        error_detail: linkFailure
+          ? `tag written; barcode link failed: ${linkFailure}`.slice(0, 200)
+          : (final.detail ?? '')
+      })
+        .then(refreshHistory)
+        .catch(() => {});
+    },
+    [api, location, refreshHistory]
+  );
+
+  /** An attempt that never reached the scanner, or was refused by it, is recorded too. */
+  const recordAttempt = useCallback(
+    (overwrite: boolean, error: string, detail: string) => {
+      recordUsbJob(api, location, {
+        state: 'failed',
+        overwrite,
+        error: error.slice(0, 32),
+        error_detail: detail.slice(0, 200)
       })
         .then(refreshHistory)
         .catch(() => {});
@@ -208,15 +232,17 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   const programUsb = useCallback(
     async (overwrite: boolean) => {
       if (!scanner.isOpen) return;
+      // From here on taps belong to this job, including one during the fetch.
+      scanner.setJobActive(true);
       setProgress({ stage: 'queued', text: 'fetching the tag data' });
       let tag: TagPayload;
       try {
         tag = await getTag(api, location);
       } catch (e: any) {
-        setProgress({
-          stage: 'failed',
-          text: e?.response?.data?.base_url ?? e.message
-        });
+        const why = e?.response?.data?.base_url ?? e.message;
+        setProgress({ stage: 'failed', text: why });
+        recordAttempt(overwrite, 'no_tag_data', why);
+        scanner.setJobActive(false);
         return;
       }
       const id = Date.now() % 1000000;
@@ -232,9 +258,13 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
         cmd.pack = tag.pack;
       }
 
-      scanner.setJobActive(true);
       let unsubscribe = () => {};
-      const final = new Promise<ScannerMessage>((resolve) => {
+      let unsubscribeClose = () => {};
+      let timer = 0;
+      // Settles on the job's result; or when the scanner goes away (the tab hidden, the
+      // device unplugged, another tab taking over); or when the scanner's own timeout has
+      // passed with no word, which should not happen but must not hang the panel.
+      const final = new Promise<ScannerMessage>((resolve, reject) => {
         unsubscribe = scanner.onEachMessage((msg) => {
           if (msg.id !== id) return;
           if (msg.evt === 'waiting')
@@ -249,6 +279,16 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
             });
           if (msg.evt === 'done' || msg.evt === 'failed') resolve(msg);
         });
+        unsubscribeClose = scanner.onClose(() =>
+          reject(new Error('the scanner disconnected during the job'))
+        );
+        timer = window.setTimeout(
+          () =>
+            reject(
+              new Error('no word from the scanner within the job timeout')
+            ),
+          tag.timeout_s * 1000 + 5000
+        );
       });
       try {
         const rsp = await scanner.request(cmd);
@@ -258,13 +298,17 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
             text: `refused: ${rsp.error}`,
             error: rsp.error
           });
+          recordAttempt(overwrite, rsp.error ?? 'refused', rsp.detail ?? '');
           return;
         }
         await finishUsb(await final, overwrite);
       } catch (e: any) {
         setProgress({ stage: 'failed', text: e.message });
+        recordAttempt(overwrite, 'no_scanner', e.message);
       } finally {
+        window.clearTimeout(timer);
         unsubscribe();
+        unsubscribeClose();
         scanner.setJobActive(false);
       }
     },

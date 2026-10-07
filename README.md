@@ -3,8 +3,8 @@
 An [InvenTree](https://inventree.org) plugin that programs the NFC tags on storage bins.
 Each bin is a stock location; its tag holds the location's page URL and InvenTree's short
 barcode for it, and the tag's UID is linked to the location as a barcode. The hardware, a
-desk scanner/programmer, is the [inventree_nfc_scanner](../inventree_nfc_scanner)
-firmware.
+desk scanner/programmer, is the
+[inventree_nfc_scanner](https://github.com/daveismith/inventree_nfc_scanner) firmware.
 
 Two routes to a tag, behind one "Program tag" button on every stock location's page:
 
@@ -41,15 +41,22 @@ InvenTree in Docker, as on the Raspberry Pi:
 3. **Turn on the plugin integrations** under *Admin Center → Settings → Plugin Settings*:
    URL integration, app integration, interface integration, event integration, and
    schedule integration. Set the global *Base URL* to the address users reach InvenTree
-   at (`https://inventree.davidiansmith.ca`): it goes onto every tag.
+   at (`https://inventree.example`): it goes onto every tag.
 
 4. **Activate the plugin** under *Admin Center → Plugins*, then restart the server and
    worker once more: an active plugin with database models needs that for its tables and
    static files.
 
 5. **Settings**, under the plugin's entry: the *Tag password* (eight hex digits; tags are
-   write-protected with it after programming; blank leaves them open), its *PACK*, the job
-   timeout, and long polling (off by default; see below).
+   write-protected with it after programming; blank leaves them open), the *Tag password
+   acknowledge (PACK)*, the *Job timeout*, *Long polling* with its *Longest hold* (off by
+   default; see below), and *Offline after*, how long a quiet scanner is shown online.
+
+   The tag password is one secret shared by every tag the server programs, and every user
+   who may program tags receives it, since their scanner needs it to write the tag. Give
+   the stock-location change permission with that in mind. Each network scanner should
+   have an InvenTree user of its own: a token serves every scanner configured with its
+   user, and the dashboard warns when two share one.
 
 `dev/setup.sh` does steps 3 and 4 through the API for the local instance; the same calls
 work against any server.
@@ -87,7 +94,9 @@ npm run build          # writes inventree_nfc_scanner/static/
 
 Then, for a release: `python -m build` in the repository root makes the wheel and sdist
 (`pip install build` first). The GitHub workflow in `.github/workflows/pypi.yaml` publishes
-on a tag.
+when a GitHub release is published. CI checks that the committed bundle in
+`inventree_nfc_scanner/static/` is what the sources build, so run `npm run build` and commit
+its output with any frontend change.
 
 ### Frontend development
 

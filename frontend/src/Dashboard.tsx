@@ -28,6 +28,7 @@ function ago(iso: string | null): string {
 
 function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
   const [scanners, setScanners] = useState<Scanner[]>([]);
+  const [usbError, setUsbError] = useState<string | null>(null);
   const usb = useSyncExternalStore(scanner.subscribe, scanner.getState);
 
   useEffect(() => {
@@ -58,7 +59,12 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
             <Button
               size='compact-xs'
               variant='default'
-              onClick={() => scanner.takeOver().catch(() => {})}
+              onClick={() =>
+                scanner.takeOver().then(
+                  () => setUsbError(null),
+                  (e) => setUsbError(e.message)
+                )
+              }
             >
               in use by another tab: take over
             </Button>
@@ -66,10 +72,20 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
             <Button
               size='compact-xs'
               variant='default'
-              onClick={() => scanner.chooseScanner().catch(() => {})}
+              onClick={() =>
+                scanner.chooseScanner().then(
+                  () => setUsbError(null),
+                  (e) => setUsbError(e.message)
+                )
+              }
             >
               connect a scanner
             </Button>
+          )}
+          {usbError && (
+            <Text c='red' size='sm'>
+              {usbError}
+            </Text>
           )}
         </Group>
       )}

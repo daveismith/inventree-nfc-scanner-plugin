@@ -15,41 +15,49 @@ class Job(models.Model):
     class Meta:
         """Meta options."""
 
-        app_label = 'inventree_nfc_scanner'
-        ordering = ['-created_at']
-        verbose_name = _('NFC tag job')
-        verbose_name_plural = _('NFC tag jobs')
+        app_label = "inventree_nfc_scanner"
+        ordering = ["-created_at"]
+        verbose_name = _("NFC tag job")
+        verbose_name_plural = _("NFC tag jobs")
 
     class Kind(models.TextChoices):
         """What the job does to the tag."""
 
-        PROGRAM = 'program', _('Program')
-        WIPE = 'wipe', _('Wipe')
+        PROGRAM = "program", _("Program")
+        WIPE = "wipe", _("Wipe")
 
     class State(models.TextChoices):
         """Where the job is. Mirrors the scanner's events."""
 
-        QUEUED = 'queued', _('Queued')  # not yet collected by the scanner
-        SENT = 'sent', _('Sent')  # collected, not yet answered
-        WAITING = 'waiting', _('Waiting for a tag')
-        WRITING = 'writing', _('Writing')
-        DONE = 'done', _('Done')
-        FAILED = 'failed', _('Failed')
-        CANCELLED = 'cancelled', _('Cancelled')
+        QUEUED = "queued", _("Queued")  # not yet collected by the scanner
+        SENT = "sent", _("Sent")  # collected, not yet answered
+        WAITING = "waiting", _("Waiting for a tag")
+        WRITING = "writing", _("Writing")
+        DONE = "done", _("Done")
+        FAILED = "failed", _("Failed")
+        CANCELLED = "cancelled", _("Cancelled")
 
     FINISHED = (State.DONE, State.FAILED, State.CANCELLED)
 
     kind = models.CharField(max_length=8, choices=Kind.choices, default=Kind.PROGRAM)
     location = models.ForeignKey(
-        'stock.StockLocation', on_delete=models.CASCADE, related_name='nfc_jobs',
-        verbose_name=_('Location'),
+        "stock.StockLocation",
+        on_delete=models.CASCADE,
+        related_name="nfc_jobs",
+        verbose_name=_("Location"),
     )
     machine = models.ForeignKey(
-        'machine.MachineConfig', null=True, blank=True, on_delete=models.SET_NULL,
-        related_name='nfc_jobs', verbose_name=_('Scanner'),
-        help_text=_('The network scanner; empty for a job done over USB'),
+        "machine.MachineConfig",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="nfc_jobs",
+        verbose_name=_("Scanner"),
+        help_text=_("The network scanner; empty for a job done over USB"),
     )
-    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -58,7 +66,9 @@ class Job(models.Model):
     overwrite = models.BooleanField(default=False)
     timeout_s = models.PositiveIntegerField(default=60)
 
-    uid = models.CharField(max_length=20, blank=True, help_text=_('The tag written, as reported'))
+    uid = models.CharField(
+        max_length=20, blank=True, help_text=_("The tag written, as reported")
+    )
     tag_type = models.CharField(max_length=12, blank=True)
     protected = models.BooleanField(null=True, blank=True)
     error = models.CharField(max_length=32, blank=True)
@@ -70,7 +80,7 @@ class Job(models.Model):
 
     def __str__(self) -> str:
         """Readable form."""
-        return f'{self.get_kind_display()} tag for {self.location} ({self.get_state_display()})'
+        return f"{self.get_kind_display()} tag for {self.location} ({self.get_state_display()})"
 
     @property
     def finished(self) -> bool:
@@ -84,13 +94,17 @@ class ScannerCommand(models.Model):
     class Meta:
         """Meta options."""
 
-        app_label = 'inventree_nfc_scanner'
-        ordering = ['seq']
-        unique_together = [('machine', 'seq')]
+        app_label = "inventree_nfc_scanner"
+        ordering = ["seq"]
+        unique_together = [("machine", "seq")]
 
-    machine = models.ForeignKey('machine.MachineConfig', on_delete=models.CASCADE, related_name='nfc_commands')
+    machine = models.ForeignKey(
+        "machine.MachineConfig", on_delete=models.CASCADE, related_name="nfc_commands"
+    )
     seq = models.PositiveIntegerField()
-    job = models.ForeignKey(Job, null=True, blank=True, on_delete=models.CASCADE, related_name='commands')
+    job = models.ForeignKey(
+        Job, null=True, blank=True, on_delete=models.CASCADE, related_name="commands"
+    )
     payload = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
     sent_at = models.DateTimeField(null=True, blank=True)
@@ -98,7 +112,7 @@ class ScannerCommand(models.Model):
 
     def __str__(self) -> str:
         """Readable form."""
-        return f'{self.machine_id} #{self.seq} {self.payload.get("cmd")}'
+        return f"{self.machine_id} #{self.seq} {self.payload.get('cmd')}"
 
 
 class ScannerMessage(models.Model):
@@ -110,10 +124,12 @@ class ScannerMessage(models.Model):
     class Meta:
         """Meta options."""
 
-        app_label = 'inventree_nfc_scanner'
-        unique_together = [('machine', 'boot', 'seq')]
+        app_label = "inventree_nfc_scanner"
+        unique_together = [("machine", "boot", "seq")]
 
-    machine = models.ForeignKey('machine.MachineConfig', on_delete=models.CASCADE, related_name='nfc_messages')
+    machine = models.ForeignKey(
+        "machine.MachineConfig", on_delete=models.CASCADE, related_name="nfc_messages"
+    )
     boot = models.PositiveIntegerField()
     seq = models.PositiveIntegerField()
     received_at = models.DateTimeField(auto_now_add=True)

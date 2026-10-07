@@ -15,7 +15,16 @@ either case.
 ## For the browser
 
 Programming a tag needs the user to have change permission on stock locations, because
-the tag's UID becomes the location's barcode.
+the tag's UID becomes the location's barcode. Reading jobs and scanners needs view
+permission on stock locations. A user with neither gets 403 from every endpoint below.
+
+**The tag password.** When the *Tag password* setting is set, every user who may program
+tags receives it, in `api/location/<pk>/tag/` and in the commands sent to network
+scanners, because their scanner needs it to write the tag. It is one secret shared by every
+tag the server programs. Anyone allowed to program tags can therefore read it; the
+permission should be given with that in mind. The plugin keeps it out of job records and
+scanner state, drops it from a command's stored payload once the scanner has acknowledged
+the command, and masks it in the admin.
 
 ### `GET api/location/<pk>/tag/`
 
@@ -41,11 +50,15 @@ barcode for the location. 400 with `{"base_url": "..."}` when the base URL is no
 
 ### `POST api/location/<pk>/link/`
 
-Make a tag's UID the location's barcode: `{"uid": "04A1B2C3D4E5F6"}`. Unlike InvenTree's own
-`/api/barcode/link/`, which refuses a barcode something already carries, this takes it from
-whatever held it before, which is what re-programming a tag for another bin means. Answers
-`{"location": 42, "uid": "…", "outcome": "linked" | "already linked" | "moved from <what>"}`.
-The network route does the same on the server when a job reports `done`.
+Make a tag's UID the location's barcode: `{"uid": "04A1B2C3D4E5F6"}` (8 to 20 hex digits).
+Unlike InvenTree's own `/api/barcode/link/`, which refuses a barcode something already
+carries, this takes it from whatever held it before, which is what re-programming a tag for
+another bin means. The user must have change permission on each such holder's model (a
+Part, a StockItem, another location); otherwise 403 and nothing changes. The move is one
+transaction and is written to the server log. Answers
+`{"location": 42, "uid": "…", "outcome": "linked" | "already linked" | "moved from <what>"}`;
+400 for a malformed UID or a link InvenTree refuses. The network route does the same on the
+server when a job reports `done`, on behalf of the user who queued the job.
 
 ### `POST api/location/<pk>/jobs/usb/`
 
@@ -77,7 +90,9 @@ The network scanners (InvenTree machines of type *NFC Scanner*), with their stat
 ```
 
 `status` is one of `online`, `busy` (a job is waiting or writing), `offline`, `unknown`,
-`error`. `last_tag` is the last tap reported outside a job, or null.
+`error`. `last_tag` is the last tap reported outside a job, or null. A `warning` (null when
+there is none) says when two scanners are configured with the same user, since one token
+then serves both; give each scanner a user of its own.
 
 ### `POST api/jobs/`
 
@@ -116,6 +131,7 @@ overwriting. A job whose scanner stops answering fails with `scanner_offline`.
 
 A job the scanner has not collected is cancelled at once. One it has collected gets a
 `cancel` command, and ends `cancelled` when the scanner confirms. Answers with the job.
+Repeating it does not queue a second `cancel`.
 
 ## For a scanner
 
@@ -179,12 +195,22 @@ Rules:
   carry it back, and move the job's state.
 - A `tag` event outside a job is kept as the scanner's last tap.
 - With the *Long polling* setting on, a call with nothing to deliver is held, up to
-  `wait_s` or the *Longest hold* setting, whichever is less, and answered as soon as a
-  command is queued. Off, every call is answered at once; a scanner should then wait at
-  least a second between idle calls.
+  `wait_s` or the *Longest hold* setting (at most 60 s), whichever is less, and answered as
+  soon as a command is queued. Off, every call is answered at once; a scanner should then
+  wait at least a second between idle calls. Each held call occupies a server worker for
+  its duration, so hold only as many scanners as the server has workers to spare.
 
-Errors: 401 for a bad token, 403 for a token that is not the machine's user, 404 for a
-`reader` no active machine is configured with, 400 for a malformed body.
+Errors: 401 for a bad token, 403 for a `reader` that no active machine is configured with
+or that is not this token's (the two are not told apart, so a token cannot be used to find
+out which reader ids exist), 400 for a malformed body (`boot`, `ack`, `wait_s` not whole
+numbers from 0 to 2^31-1, or `msgs` not a list of objects). A reader id that two active
+machines share is treated as unknown until that is fixed.
+
+Every value in a message is bounded and typed before it is stored: strings are cut to the
+field's length, a `uid` that is not 8 to 20 hex digits is ignored, and so on. The
+password and PACK in a `program` or `wipe` command are removed from the plugin's record of
+the command once the scanner acknowledges it. Acknowledged commands and seen messages are
+deleted after two days.
 
 The reference client is `tools/sync_bridge.py` in the firmware repository, which drives a
 USB scanner through this exchange.

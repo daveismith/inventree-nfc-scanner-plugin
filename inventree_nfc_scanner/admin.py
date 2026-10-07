@@ -17,10 +17,18 @@ class JobAdmin(admin.ModelAdmin):
 
 @admin.register(ScannerCommand)
 class ScannerCommandAdmin(admin.ModelAdmin):
-    """Commands queued for scanners."""
+    """Commands queued for scanners. The payload may carry the tag password until the command
+    is acknowledged, so it is shown without it."""
 
-    list_display = ('id', 'machine', 'seq', 'job', 'created_at', 'sent_at', 'acked_at')
+    list_display = ('id', 'machine', 'seq', 'job', 'command', 'created_at', 'sent_at', 'acked_at')
     list_filter = ('machine',)
+    exclude = ('payload',)
+    readonly_fields = ('command',)
+
+    @admin.display(description='payload')
+    def command(self, obj):
+        """The payload with its secrets replaced."""
+        return {k: ('***' if k in ('pwd', 'pack') else v) for k, v in obj.payload.items()}
 
 
 @admin.register(ScannerMessage)

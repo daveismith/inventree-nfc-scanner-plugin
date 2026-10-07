@@ -10,6 +10,8 @@ Two routes to a tag:
 See docs/api.md for the endpoints, and the firmware repository for the scanner.
 """
 
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils.translation import gettext_lazy as _
 
 from plugin import InvenTreePlugin
@@ -23,6 +25,17 @@ from plugin.mixins import (
 )
 
 from . import PLUGIN_VERSION
+
+
+def hex_digits(n):
+    """A validator for a setting of exactly `n` hex digits, or blank."""
+
+    def validate(value):
+        v = str(value or '').strip()
+        if v and (len(v) != n or any(c not in '0123456789abcdefABCDEF' for c in v)):
+            raise ValidationError(f'{n} hex digits, or blank')
+
+    return validate
 
 
 class InvenTreeNFCScanner(
@@ -45,14 +58,20 @@ class InvenTreeNFCScanner(
     SETTINGS = {
         'TAG_PASSWORD': {
             'name': _('Tag password'),
-            'description': _('Eight hex digits. Tags are write-protected with it after programming. Blank: no protection.'),
+            'description': _(
+                'Eight hex digits. Tags are write-protected with it after programming. Blank: no protection. '
+                'Anyone who may program tags receives it, since their scanner needs it.'
+            ),
             'default': '',
             'protected': True,
+            'validator': hex_digits(8),
         },
         'TAG_PACK': {
             'name': _('Tag password acknowledge (PACK)'),
             'description': _('Four hex digits the tag answers a correct password with'),
             'default': '0000',
+            'protected': True,
+            'validator': hex_digits(4),
         },
         'JOB_TIMEOUT_S': {
             'name': _('Job timeout (seconds)'),
@@ -71,8 +90,8 @@ class InvenTreeNFCScanner(
         },
         'LONG_POLL_MAX_S': {
             'name': _('Longest hold (seconds)'),
-            'description': _('Keep under the proxy\'s request timeout'),
-            'validator': int,
+            'description': _('Keep under the proxy\'s request timeout; at most 60. Each held call occupies a server worker.'),
+            'validator': [int, MinValueValidator(0), MaxValueValidator(60)],
             'default': 25,
         },
         'SCANNER_OFFLINE_S': {

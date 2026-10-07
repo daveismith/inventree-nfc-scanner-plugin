@@ -10,11 +10,14 @@ to keep its status current.
 from __future__ import annotations
 
 import datetime
+import logging
 
 from django.utils.translation import gettext_lazy as _
 
 from generic.states import ColorEnum
 from machine.machine_type import BaseDriver, BaseMachineType, MachineStatus
+
+logger = logging.getLogger('inventree')
 
 MACHINE_TYPE = 'nfc-scanner'
 NETWORK_DRIVER = 'nfc-network'
@@ -116,8 +119,18 @@ class NetworkScannerDriver(NfcScannerBaseDriver):
         machine.set_status_text(str(_('Not heard from yet')))
 
     def find_by_reader_id(self, reader_id: str) -> NfcScannerMachine | None:
-        """The active machine configured with this reader id, if any."""
-        for machine in self.get_machines(active=True):
-            if machine.get_setting('READER_ID', 'D') == reader_id:
-                return machine
-        return None
+        """The active machine configured with this reader id, if exactly one is."""
+        found = [m for m in self.get_machines(active=True) if m.get_setting('READER_ID', 'D') == reader_id]
+        if len(found) > 1:
+            logger.warning('NFC: %d active scanners share the reader id %r; none will sync until that is fixed', len(found), reader_id)
+            return None
+        return found[0] if found else None
+
+    def shares_user_with(self, machine: NfcScannerMachine) -> list[str]:
+        """Other active network scanners configured with the same user, whose token would
+        therefore work for this one too. Give each scanner a user of its own."""
+        user = machine.get_setting('USER', 'D')
+        return [
+            m.name for m in self.get_machines(active=True)
+            if m.pk != machine.pk and m.get_setting('USER', 'D') == user
+        ]

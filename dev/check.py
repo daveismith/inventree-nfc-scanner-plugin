@@ -20,6 +20,21 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 READER = 'nfc-34b7da52a084'
+
+
+def env_value(name, default=''):
+    """A value from dev/.env, the compose environment."""
+    try:
+        with open(os.path.join(HERE, '.env')) as f:
+            for line in f:
+                if line.startswith(name + '='):
+                    return line.split('=', 1)[1].strip()
+    except FileNotFoundError:
+        pass
+    return default
+
+
+ADMIN_PASSWORD = env_value('INVENTREE_ADMIN_PASSWORD', 'admin-nfc-dev')
 SCANNER_USER, SCANNER_PASSWORD = 'scanner-desk', 'scanner-nfc-dev'
 
 fails = 0
@@ -116,9 +131,17 @@ def run(api, admin, scanner, machine, loc):
     st, body = sync({}, token=admin)
     check(st == 403, "a token that is not the machine's user: 403", (st, body))
     st, body = api.call('POST', f'{P}/sync/', token=scanner, body={'reader': 'nfc-000000000000', 'proto': 1})
-    check(st == 404, 'unknown reader id: 404', (st, body))
-    st, body = api.call('GET', f'{P}/api/location/{loc}/tag/', basic='admin:x')
+    check(st == 403, 'unknown reader id: 403, the same as a reader that is not this token\'s', (st, body))
+    st, body = sync({'boot': 'x'})
+    check(st == 400, 'a malformed sync body: 400', (st, body))
+    st, body = sync({'msgs': 'nope'})
+    check(st == 400, 'msgs that is not a list: 400', (st, body))
+    st, body = api.call('GET', f'{P}/api/location/{loc}/tag/', basic=f'admin:{ADMIN_PASSWORD}')
     check(st == 401, 'basic auth is not accepted on plugin URLs (session or token only)', st)
+    st, body = api.call('GET', f'{P}/api/location/{loc}/tag/', token=scanner)
+    check(st == 403, 'the scanner user, with no stock permission, may not read the tag data (nor the password)', (st, body))
+    st, body = api.call('GET', f'{P}/api/scanners/', token=scanner)
+    check(st == 403, 'nor list the scanners', st)
 
     # --- the tag's contents
     st, tag = api.call('GET', f'{P}/api/location/{loc}/tag/', token=admin)
@@ -220,6 +243,8 @@ def run(api, admin, scanner, machine, loc):
     check(st == 200 and body['outcome'].startswith('moved from'), 'the same UID linked to another bin is moved there', (st, body))
     st, body = api.call('POST', f'{P}/api/location/{loc2["pk"]}/link/', token=admin, body={'uid': '04A1B2C3D4E5F6'})
     check(st == 200 and body['outcome'] == 'already linked', 'linking it again is a no-op', (st, body))
+    st, body = api.call('POST', f'{P}/api/location/{loc2["pk"]}/link/', token=admin, body={'uid': 'not hex'})
+    check(st == 400, 'a UID that is not hex is refused', (st, body))
     st, location = api.call('GET', f'/api/stock/location/{loc}/', token=admin)
     check(not location.get('barcode_hash'), 'and the first bin no longer carries it', location.get('barcode_hash'))
     st, body = api.call('POST', f'{P}/api/location/{loc}/link/', token=admin, body={'uid': '04A1B2C3D4E5F6'})

@@ -1,8 +1,9 @@
 """The plugin's HTTP endpoints: /sync for scanners, and a small API for the panel."""
 
 import logging
+import uuid
 
-from django.http import Http404
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -48,6 +49,14 @@ class CanProgramTags(permissions.BasePermission):
         return bool(request.user and request.user.is_authenticated and request.user.has_perm('stock.change_stocklocation'))
 
 
+class CanSeeScanners(permissions.BasePermission):
+    """Reading jobs and scanners: what a tag holds is stock information."""
+
+    def has_permission(self, request, view):
+        """Check the stock location view permission."""
+        return bool(request.user and request.user.is_authenticated and request.user.has_perm('stock.view_stocklocation'))
+
+
 def tag_payload(location: StockLocation) -> dict:
     """What a `program` job for this location carries."""
     plg = plugin()
@@ -87,16 +96,19 @@ class LinkView(APIView):
 
     def post(self, request, pk, *args, **kwargs):
         """Link it."""
-        from .barcodes import link_uid
+        from .barcodes import BadUid, NotPermitted, clean_uid, link_uid
 
         location = get_object_or_404(StockLocation, pk=pk)
-        uid = str(request.data.get('uid', '')).strip().upper()
-        if not uid or len(uid) > 20 or any(c not in '0123456789ABCDEF' for c in uid):
-            raise ValidationError({'uid': 'the tag UID, as hex'})
         try:
-            outcome = link_uid(location, uid)
-        except Exception as exc:  # noqa: BLE001 - say what InvenTree said
+            uid = clean_uid(request.data.get('uid', ''))
+            outcome = link_uid(location, uid, request.user)
+        except BadUid as exc:
             raise ValidationError({'uid': str(exc)})
+        except NotPermitted as exc:
+            raise PermissionDenied(str(exc))
+        except Exception as exc:  # noqa: BLE001 - InvenTree's own refusal (a ValidationError), or a fault, which is logged
+            logger.warning('NFC: could not link %s to location %s for %s: %s', request.data.get('uid'), pk, request.user, exc)
+            raise ValidationError({'uid': 'the barcode could not be linked; the server log has the reason'})
         return Response({'location': location.pk, 'uid': uid, 'outcome': outcome})
 
 
@@ -128,7 +140,10 @@ def scanner_machines() -> list[NfcScannerMachine]:
 def scanner_dict(machine: NfcScannerMachine) -> dict:
     """A scanner as the panel sees it."""
     seen = machine.last_seen
+    driver = registry.get_driver_instance(NETWORK_DRIVER)
+    shared = driver.shares_user_with(machine) if driver and machine.machine_config.driver == NETWORK_DRIVER else []
     return {
+        'warning': f'shares its user with {", ".join(shared)}; give each scanner a user of its own' if shared else None,
         'id': str(machine.pk),
         'name': machine.name,
         'driver': machine.machine_config.driver,
@@ -144,7 +159,7 @@ def scanner_dict(machine: NfcScannerMachine) -> dict:
 class ScannerListView(APIView):
     """GET api/scanners/ : the scanners, with their state."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [CanSeeScanners]
 
     def get(self, request, *args, **kwargs):
         """List them."""
@@ -160,9 +175,15 @@ class JobListView(APIView):
         """Recent jobs, newest first; `location` and `scanner` filter."""
         jobs = Job.objects.all()
         if request.query_params.get('location'):
-            jobs = jobs.filter(location_id=request.query_params['location'])
+            try:
+                jobs = jobs.filter(location_id=int(request.query_params['location']))
+            except ValueError:
+                raise ValidationError({'location': 'expected an integer'})
         if request.query_params.get('scanner'):
-            jobs = jobs.filter(machine_id=request.query_params['scanner'])
+            try:
+                jobs = jobs.filter(machine_id=uuid.UUID(request.query_params['scanner']))
+            except ValueError:
+                raise ValidationError({'scanner': 'expected a machine id'})
         return Response(JobSerializer(jobs[:50], many=True).data)
 
     def post(self, request, *args, **kwargs):
@@ -179,32 +200,36 @@ class JobListView(APIView):
             raise ValidationError({'scanner': 'That scanner is not a network scanner.'})
 
         kind = d.get('kind', Job.Kind.PROGRAM)
-        job = Job.objects.create(
-            kind=kind, location=location, machine=machine.machine_config, created_by=request.user,
-            overwrite=d.get('overwrite', False), timeout_s=int(plugin().get_setting('JOB_TIMEOUT_S') or 60),
-        )
-
+        timeout_s = int(plugin().get_setting('JOB_TIMEOUT_S') or 60)
+        # The command's contents are built before anything is written, so that a missing base
+        # URL (a 400 from tag_payload) leaves no job behind.
         if kind == Job.Kind.PROGRAM:
             payload = tag_payload(location)
-            cmd = {'cmd': 'program', 'id': job.pk, 'ndef': payload['ndef'], 'timeout_ms': job.timeout_s * 1000}
-            if job.overwrite:
+            cmd = {'cmd': 'program', 'ndef': payload['ndef'], 'timeout_ms': timeout_s * 1000}
+            if d.get('overwrite', False):
                 cmd['overwrite'] = True
             if 'pwd' in payload:
                 cmd['pwd'] = payload['pwd']
                 cmd['pack'] = payload['pack']
         else:
-            cmd = {'cmd': 'wipe', 'id': job.pk, 'timeout_ms': job.timeout_s * 1000}
+            cmd = {'cmd': 'wipe', 'timeout_ms': timeout_s * 1000}
             pwd = (plugin().get_setting('TAG_PASSWORD') or '').strip().upper()
             if pwd:
                 cmd['pwd'] = pwd
-        enqueue(machine.machine_config, cmd, job=job)
+
+        with transaction.atomic():
+            job = Job.objects.create(
+                kind=kind, location=location, machine=machine.machine_config, created_by=request.user,
+                overwrite=d.get('overwrite', False), timeout_s=timeout_s,
+            )
+            enqueue(machine.machine_config, dict(cmd, id=job.pk), job=job)
         return Response(JobSerializer(job).data, status=status.HTTP_201_CREATED)
 
 
 class JobDetailView(APIView):
     """GET api/jobs/<pk>/ : one job."""
 
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [CanSeeScanners]
 
     def get(self, request, pk, *args, **kwargs):
         """Return it."""
@@ -218,16 +243,18 @@ class JobCancelView(APIView):
 
     def post(self, request, pk, *args, **kwargs):
         """Cancel it: at once if the scanner has not collected it, else by asking the scanner."""
-        job = get_object_or_404(Job, pk=pk)
-        if job.finished:
-            return Response(JobSerializer(job).data)
-        if job.machine is None or job.state == Job.State.QUEUED:
-            ScannerCommand.objects.filter(job=job, acked_at__isnull=True, sent_at__isnull=True).delete()
-            job.state = Job.State.CANCELLED
-            job.finished_at = timezone.now()
-            job.save()
-        else:
-            enqueue(job.machine, {'cmd': 'cancel', 'id': job.pk}, job=job)
+        with transaction.atomic():
+            job = get_object_or_404(Job.objects.select_for_update(), pk=pk)
+            if job.finished:
+                return Response(JobSerializer(job).data)
+            unsent = ScannerCommand.objects.select_for_update().filter(job=job, acked_at__isnull=True, sent_at__isnull=True)
+            if job.machine is None or (job.state == Job.State.QUEUED and unsent.exists()):
+                unsent.delete()
+                job.state = Job.State.CANCELLED
+                job.finished_at = timezone.now()
+                job.save()
+            elif not ScannerCommand.objects.filter(job=job, acked_at__isnull=True, payload__cmd='cancel').exists():
+                enqueue(job.machine, {'cmd': 'cancel', 'id': job.pk}, job=job)
         return Response(JobSerializer(job).data)
 
 
@@ -247,13 +274,12 @@ class SyncView(APIView):
 
         driver = registry.get_driver_instance(NETWORK_DRIVER)
         machine = driver.find_by_reader_id(reader_id) if driver else None
-        if machine is None:
-            logger.info('NFC /sync from unknown reader %s (user %s)', reader_id, request.user)
-            raise Http404(f'No active scanner is configured with reader id {reader_id!r}')
-
-        allowed_user = str(machine.get_setting('USER', 'D') or '')
-        if allowed_user != str(request.user.pk):
-            raise PermissionDenied('This token does not belong to the user configured for that scanner.')
+        # An unknown reader and a reader that is not this token's get the same answer, so a
+        # token cannot be used to find out which reader ids exist.
+        if machine is None or str(machine.get_setting('USER', 'D') or '') != str(request.user.pk):
+            shown = ''.join(c for c in reader_id[:40] if c.isprintable())
+            logger.info('NFC /sync refused for reader %r (user %s)', shown, request.user)
+            raise PermissionDenied('No scanner with that reader id is configured for this token.')
 
         plg = plugin()
         long_poll = bool(plg.get_setting('LONG_POLL')) if plg else False

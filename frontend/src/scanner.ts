@@ -10,7 +10,23 @@
  *
  * It holds the port in one tab at a time, and only while that tab is visible, except that a
  * job in progress keeps it until the job ends.
+ *
+ * On connecting it checks the scanner in with the server, which may answer with a firmware
+ * update an admin has deployed to it. A required one is installed at once; a deferrable one
+ * waits for the user's "Update now" or "Later". Installing streams the image over the serial
+ * link (ota_begin, ota_data, ota_end), the scanner restarts into it, the port comes back by
+ * itself, and the check-in that follows tells the server, and the user, how it went.
  */
+import type { InvenTreePluginContext } from '@inventreedb/ui';
+
+import {
+  fetchImage,
+  type UpdateOffer,
+  usbCheckIn,
+  usbDefer,
+  usbReport,
+  usbStart
+} from './api';
 import {
   grantedPort,
   hasWebSerial,
@@ -22,12 +38,39 @@ import {
 } from './serial';
 
 type Navigate = (path: string) => void;
+type Api = InvenTreePluginContext['api'];
+
+const CHUNK = 768; // bytes of image per ota_data line (the firmware's APP_OTA_CHUNK_MAX)
+
+export interface UpdateProgress {
+  version: string;
+  stage: 'starting' | 'fetching' | 'sending' | 'checking' | 'restarting';
+  done: number;
+  total: number;
+}
 
 export interface ScannerState {
   link: LinkState;
   info: ScannerMessage | null; // the scanner's `info`, once connected
   onReader: ScannerMessage | null; // the tag on the reader, from `tag` events
   jobActive: boolean; // a job is running from some panel: taps are its business
+  update: UpdateOffer | null; // a firmware update waiting for this scanner
+  updating: UpdateProgress | null; // one being installed now
+  updateNote: { ok: boolean; text: string } | null; // how the last one went
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string | null> {
+  if (!crypto?.subtle) return null; // not a secure context: the scanner checks it anyway
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (b) =>
+    b.toString(16).padStart(2, '0')
+  ).join('');
 }
 
 class ScannerService {
@@ -41,8 +84,15 @@ class ScannerService {
     link: 'closed',
     info: null,
     onReader: null,
-    jobActive: false
+    jobActive: false,
+    update: null,
+    updating: null,
+    updateNote: null
   };
+
+  private api: Api | null = null;
+  /** The update this tab installed, whose verdict the next check-in brings. */
+  private awaitingVerdict: number | null = null;
 
   /** React-style subscription (for useSyncExternalStore). */
   subscribe = (listener: () => void) => {
@@ -63,8 +113,12 @@ class ScannerService {
    * Called by every plugin component as it mounts. Keeps the latest router `navigate`, and
    * on the first call starts the connection and the visibility handling.
    */
-  attach(navigate: Navigate) {
+  attach(navigate: Navigate, api?: Api) {
     this.navigate = navigate;
+    if (api && !this.api) {
+      this.api = api;
+      if (this.state.info) this.checkIn(this.state.info).catch(() => {});
+    }
     if (this.started || !hasWebSerial()) return;
     this.started = true;
     document.addEventListener('visibilitychange', () => {
@@ -102,7 +156,9 @@ class ScannerService {
       this.link.onState = (link) => {
         this.set({
           link,
-          ...(link === 'closed' ? { info: null, onReader: null } : {})
+          ...(link === 'closed'
+            ? { info: null, onReader: null, update: null }
+            : {})
         });
         // Another tab has the port: it lets go when hidden, or when its job ends, with no
         // word to us, so look again now and then.
@@ -167,6 +223,183 @@ class ScannerService {
     } finally {
       this.connecting = false;
     }
+    if (this.state.info) this.checkIn(this.state.info).catch(() => {});
+  }
+
+  /**
+   * Tell the server which scanner is here and what it runs; hear whether an update waits
+   * for it. A user who may not program tags gets 403, and simply no offer. Firmware too old
+   * to say who it is (no `reader` in `info`) cannot take an update over USB anyway.
+   */
+  private async checkIn(info: ScannerMessage) {
+    if (!this.api || typeof info.reader !== 'string') return;
+    const ci = await usbCheckIn(this.api, {
+      reader: info.reader,
+      fw: String(info.fw ?? ''),
+      proto: Number(info.proto ?? 0)
+    });
+    if (
+      this.awaitingVerdict !== null &&
+      ci.last &&
+      ci.last.id === this.awaitingVerdict
+    ) {
+      this.awaitingVerdict = null;
+      const ok = ci.last.state === 'confirmed';
+      this.set({
+        updateNote: {
+          ok,
+          text: ok
+            ? `Scanner updated to firmware ${ci.last.version}.`
+            : ci.last.state === 'rolled_back'
+              ? `The update to ${ci.last.version} did not hold; the scanner went back to ${info.fw}.`
+              : `The update to ${ci.last.version} did not finish (${ci.last.error || ci.last.state}).`
+        }
+      });
+    }
+    this.set({ update: ci.update });
+    if (ci.update?.required && !this.state.updating) {
+      this.installUpdate().catch(() => {});
+    }
+  }
+
+  /** The user chose "Later". */
+  async deferUpdate() {
+    const offer = this.state.update;
+    const reader = this.state.info?.reader;
+    if (!offer || !this.api || !reader) return;
+    await usbDefer(this.api, offer.id, reader);
+    this.set({
+      update: null,
+      updateNote: {
+        ok: true,
+        text: `Firmware ${offer.version} will be offered again next time the scanner connects.`
+      }
+    });
+  }
+
+  /** Install the waiting update over the serial link. */
+  async installUpdate() {
+    const offer = this.state.update;
+    const reader = this.state.info?.reader as string | undefined;
+    const api = this.api;
+    if (!offer || !api || !reader || !this.link?.isOpen || this.state.updating)
+      return;
+    if (this.state.jobActive) {
+      this.set({
+        updateNote: {
+          ok: false,
+          text: 'Finish the tag job first; then the update can run.'
+        }
+      });
+      return;
+    }
+    const progress = (patch: Partial<UpdateProgress>) =>
+      this.set({
+        updating: {
+          ...(this.state.updating ?? {
+            version: offer.version,
+            stage: 'starting',
+            done: 0,
+            total: offer.size
+          }),
+          ...patch
+        }
+      });
+    // A job in progress, as far as the port is concerned: kept open if the tab is hidden,
+    // and taps are not acted on.
+    this.setJobActive(true);
+    this.set({ updateNote: null });
+    progress({ stage: 'starting' });
+    let claimed = false;
+    try {
+      const go = await usbStart(api, offer.id, reader);
+      claimed = true;
+      progress({ stage: 'fetching' });
+      await usbReport(api, go.id, { reader, state: 'downloading' });
+      const image = await fetchImage(api, go.url);
+      if (image.length !== go.size)
+        throw Object.assign(new Error('the image is not the size expected'), {
+          code: 'bad_image'
+        });
+      const digest = await sha256Hex(image);
+      if (digest && digest !== go.sha256)
+        throw Object.assign(new Error('the image is not the one expected'), {
+          code: 'bad_image'
+        });
+
+      progress({ stage: 'sending', done: 0, total: image.length });
+      const ask = async (cmd: ScannerMessage, ms = 10000) => {
+        const rsp = await this.link!.request(cmd, ms);
+        if (!rsp.ok)
+          throw Object.assign(
+            new Error(rsp.detail || rsp.error || `${cmd.cmd} refused`),
+            { code: rsp.error || 'refused' }
+          );
+        return rsp;
+      };
+      await ask({
+        cmd: 'ota_begin',
+        id: go.id,
+        size: image.length,
+        sha256: go.sha256
+      });
+      let shown = 0;
+      for (let at = 0; at < image.length; at += CHUNK) {
+        const piece = image.subarray(at, at + CHUNK);
+        await ask({
+          cmd: 'ota_data',
+          id: go.id,
+          at,
+          data: bytesToBase64(piece)
+        });
+        const done = at + piece.length;
+        if (done - shown >= image.length / 100 || done === image.length) {
+          shown = done;
+          progress({ done });
+        }
+      }
+      progress({ stage: 'checking' });
+      await ask({ cmd: 'ota_end', id: go.id }, 30000);
+      progress({ stage: 'restarting' });
+      this.awaitingVerdict = go.id;
+      await usbReport(api, go.id, { reader, state: 'restarting' }).catch(
+        () => {}
+      );
+      // The scanner restarts now; the port comes back by itself (the `connect` event), and
+      // the check-in then says how it went.
+      this.set({
+        updateNote: {
+          ok: true,
+          text: `Firmware ${offer.version} sent; the scanner is restarting into it and will reconnect by itself.`
+        }
+      });
+    } catch (e: any) {
+      const disconnected = !this.link?.isOpen;
+      const code = disconnected ? 'interrupted' : e?.code || 'failed';
+      if (claimed)
+        await usbReport(api, offer.id, {
+          reader,
+          state: 'failed',
+          error: code,
+          detail: String(e?.message ?? '').slice(0, 200)
+        }).catch(() => {});
+      this.set({
+        updateNote: {
+          ok: false,
+          text: `The firmware update did not finish: ${e?.message ?? e}`
+        }
+      });
+      // A connection that is still there may be offered it again.
+      if (this.state.info && this.link?.isOpen)
+        this.checkIn(this.state.info).catch(() => {});
+    } finally {
+      this.set({ updating: null });
+      this.setJobActive(false);
+    }
+  }
+
+  dismissUpdateNote() {
+    this.set({ updateNote: null });
   }
 
   /** Ask the user for the scanner (needs a click). */

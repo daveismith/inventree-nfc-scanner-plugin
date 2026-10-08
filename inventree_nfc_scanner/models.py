@@ -156,3 +156,177 @@ class ScannerCounter(models.Model):
     def __str__(self) -> str:
         """Readable form."""
         return f"{self.machine_id} at {self.last_seq}"
+
+
+# Fleet firmware updates. See docs/fleet-updates.md.
+
+
+def firmware_path(instance, filename: str) -> str:
+    """Where an image is kept in media: one folder per version."""
+    return f"plugins/nfcscanner/firmware/{instance.version}/{filename}"
+
+
+class Firmware(models.Model):
+    """A scanner firmware release the server holds, fetched from GitHub or uploaded.
+
+    The manifest is the release's own description (tools/make_release.py in the firmware
+    repository); the fields beside it are the parts of it the plugin decides with.
+    """
+
+    class Meta:
+        """Meta options."""
+
+        app_label = "inventree_nfc_scanner"
+        ordering = ["-published_at", "-pk"]
+        verbose_name = _("Scanner firmware")
+        verbose_name_plural = _("Scanner firmware")
+
+    class Source(models.TextChoices):
+        """Where it came from."""
+
+        GITHUB = "github", _("GitHub release")
+        UPLOAD = "upload", _("Uploaded")
+
+    version = models.CharField(max_length=40, unique=True)
+    prerelease = models.BooleanField(default=False)
+    source = models.CharField(max_length=8, choices=Source.choices)
+    release_url = models.URLField(max_length=300, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    added_at = models.DateTimeField(auto_now_add=True)
+    added_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    manifest = models.JSONField()
+    proto = models.PositiveIntegerField()
+    settings_version = models.PositiveIntegerField()
+    min_plugin = models.CharField(max_length=40)
+
+    app = models.FileField(upload_to=firmware_path, max_length=200, blank=True)
+    app_size = models.PositiveIntegerField()
+    app_sha256 = models.CharField(max_length=64)
+    merged = models.FileField(upload_to=firmware_path, max_length=200, blank=True)
+    merged_size = models.PositiveIntegerField(null=True, blank=True)
+    merged_sha256 = models.CharField(max_length=64, blank=True)
+
+    def __str__(self) -> str:
+        """Readable form."""
+        return self.version
+
+    @property
+    def available(self) -> bool:
+        """Whether the image is still on disk (old ones are pruned, their records kept)."""
+        return bool(self.app)
+
+
+class Scanner(models.Model):
+    """Every scanner the server has heard of, over the network or through a browser over USB,
+    by the id it reports (`nfc-` and its MAC address)."""
+
+    class Meta:
+        """Meta options."""
+
+        app_label = "inventree_nfc_scanner"
+        ordering = ["reader_id"]
+        verbose_name = _("NFC scanner (fleet)")
+        verbose_name_plural = _("NFC scanners (fleet)")
+
+    class Via(models.TextChoices):
+        """How it was last heard from."""
+
+        NETWORK = "network", _("Network")
+        USB = "usb", _("USB")
+
+    reader_id = models.CharField(max_length=32, unique=True)
+    fw = models.CharField(max_length=40, blank=True)
+    proto = models.PositiveIntegerField(null=True, blank=True)
+    boot = models.PositiveIntegerField(null=True, blank=True)
+    first_seen = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(null=True, blank=True)
+    last_via = models.CharField(max_length=8, choices=Via.choices, blank=True)
+    last_user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    def __str__(self) -> str:
+        """Readable form."""
+        return f"{self.reader_id} ({self.fw or 'version unknown'})"
+
+
+class Deployment(models.Model):
+    """One scanner told to run one firmware. A network scanner gets it on its next call; a
+    USB scanner when a browser next connects to it."""
+
+    class Meta:
+        """Meta options."""
+
+        app_label = "inventree_nfc_scanner"
+        ordering = ["-requested_at", "-pk"]
+
+    class State(models.TextChoices):
+        """Where it is."""
+
+        PENDING = "pending", _("Pending")  # waiting for the scanner
+        SENT = "sent", _("Sent")  # handed to the scanner, not yet answered
+        DOWNLOADING = "downloading", _("Downloading")
+        RESTARTING = "restarting", _("Restarting")
+        CONFIRMED = "confirmed", _("Confirmed")
+        FAILED = "failed", _("Failed")
+        ROLLED_BACK = "rolled_back", _("Rolled back")
+        SUPERSEDED = "superseded", _("Superseded")
+        CANCELLED = "cancelled", _("Cancelled")
+
+    IN_FLIGHT = (State.SENT, State.DOWNLOADING, State.RESTARTING)
+    FINISHED = (
+        State.CONFIRMED,
+        State.FAILED,
+        State.ROLLED_BACK,
+        State.SUPERSEDED,
+        State.CANCELLED,
+    )
+
+    scanner = models.ForeignKey(
+        Scanner, on_delete=models.CASCADE, related_name="deployments"
+    )
+    firmware = models.ForeignKey(
+        Firmware, on_delete=models.PROTECT, related_name="deployments"
+    )
+    requested_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+    required = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text=_("Whether a USB user may put it off; empty: the plugin's policy"),
+    )
+    required_after = models.DateTimeField(
+        null=True, blank=True, help_text=_("No longer deferrable from this time")
+    )
+
+    state = models.CharField(
+        max_length=12, choices=State.choices, default=State.PENDING
+    )
+    via = models.CharField(max_length=8, choices=Scanner.Via.choices, blank=True)
+    from_version = models.CharField(max_length=40, blank=True)
+    boot_at_start = models.PositiveIntegerField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    retry_after = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    deferrals = models.PositiveIntegerField(default=0)
+    last_deferred_at = models.DateTimeField(null=True, blank=True)
+    error = models.CharField(max_length=32, blank=True)
+    detail = models.CharField(max_length=200, blank=True)
+
+    def __str__(self) -> str:
+        """Readable form."""
+        return (
+            f"{self.firmware} to {self.scanner.reader_id} ({self.get_state_display()})"
+        )
+
+    @property
+    def finished(self) -> bool:
+        """Whether nothing more will happen to it."""
+        return self.state in self.FINISHED

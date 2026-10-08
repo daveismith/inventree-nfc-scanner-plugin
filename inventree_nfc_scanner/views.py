@@ -253,6 +253,17 @@ class JobListView(APIView):
                 "scanner": "That scanner is offline; a job for it would only wait."
             })
 
+        from .models import Deployment
+
+        if Deployment.objects.filter(
+            scanner__reader_id=machine.get_setting("READER_ID", "D"),
+            via="network",
+            state__in=Deployment.IN_FLIGHT,
+        ).exists():
+            raise ValidationError({
+                "scanner": "That scanner is updating its firmware; try again in a minute."
+            })
+
         kind = d.get("kind", Job.Kind.PROGRAM)
         timeout_s = int(plugin().get_setting("JOB_TIMEOUT_S") or 60)
         # The command's contents are built before anything is written, so that a missing base
@@ -363,4 +374,7 @@ class SyncView(APIView):
         max_s = (
             int(plg.get_setting("LONG_POLL_MAX_S") or 0) if (plg and long_poll) else 0
         )
-        return Response(handle_sync(machine, body, long_poll_max_s=max_s))
+        origin = request.build_absolute_uri("/").rstrip("/")
+        return Response(
+            handle_sync(machine, body, long_poll_max_s=max_s, origin=origin)
+        )

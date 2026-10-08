@@ -69,6 +69,13 @@ def _seq(value) -> int | None:
     return value if isinstance(value, int) and 0 <= value <= SEQ_MAX else None
 
 
+def shared_cache() -> bool:
+    """Whether the cache is one every process sees (Redis), rather than per process."""
+    from django.conf import settings
+
+    return "LocMemCache" not in settings.CACHES.get("default", {}).get("BACKEND", "")
+
+
 def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCommand:
     """Queue a command for a scanner, with the next sequence number."""
     with transaction.atomic():
@@ -199,6 +206,8 @@ def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
             uid=_uid(msg.get("uid")) or job.uid,
             tag_type=_text(msg.get("type"), 12),
             protected=_flag(msg.get("protected")),
+            error="",
+            error_detail="",
         )
         if job.kind == Job.Kind.PROGRAM:
             _link_barcode(job)
@@ -350,6 +359,11 @@ def mark_stale_scanners(offline_after_s: int) -> None:
     offline_after_s = max(offline_after_s, hold_s + 15)
 
     cutoff = timezone.now() - datetime.timedelta(seconds=offline_after_s)
+    # Status lives in the cache. Per process (no Redis), the worker's copy says nothing about
+    # what a scanner is doing, and acting on it would fail healthy jobs.
+    if not shared_cache():
+        return
+
     unfinished = [
         Job.State.QUEUED,
         Job.State.SENT,
@@ -376,9 +390,19 @@ def mark_stale_scanners(offline_after_s: int) -> None:
             # A job the scanner will not finish, and one it will not even collect: for a
             # scanner just marked offline, and for one that was never heard from (unknown,
             # or not initialised) and has had its chance.
-            for job in Job.objects.filter(
+            job_ids = Job.objects.filter(
                 machine=machine.machine_config,
                 state__in=unfinished,
                 created_at__lt=cutoff,
-            ):
-                _finish(job, Job.State.FAILED, error="scanner_offline")
+            ).values_list("pk", flat=True)
+            for job_id in list(job_ids):
+                # Under the job's lock, and only if it is still unfinished: a `done` landing
+                # just now must not be written over.
+                with transaction.atomic():
+                    job = (
+                        Job.objects.select_for_update()
+                        .filter(pk=job_id, state__in=unfinished)
+                        .first()
+                    )
+                    if job:
+                        _finish(job, Job.State.FAILED, error="scanner_offline")

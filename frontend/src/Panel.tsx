@@ -237,6 +237,8 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   const programUsb = useCallback(
     async (overwrite: boolean) => {
       if (!scanner.isOpen) return;
+      netJobId.current = null; // a network job's late answers are not this job's
+      netJobEnded.current = false;
       // From here on taps belong to this job, including one during the fetch.
       scanner.setJobActive(true);
       setProgress({ stage: 'queued', text: 'fetching the tag data' });
@@ -343,6 +345,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
           overwrite
         });
         netJobId.current = job.id;
+        netJobEnded.current = false;
         setNetJob(job);
         setProgress({ stage: 'queued', text: describe(job) });
       } catch (e: any) {
@@ -358,11 +361,16 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
 
   // The network job being followed, by id, for answers that arrive after it changed.
   const netJobId = useRef<number | null>(null);
+  const netJobEnded = useRef(false);
 
   /** A network job as the server now reports it: shown, and ended when it has ended. */
   const applyJob = useCallback(
     (job: Job) => {
       if (netJobId.current !== null && job.id !== netJobId.current) return; // a stale poll
+      // An answer that was in flight when the job ended must not bring it back.
+      const ended = ['done', 'failed', 'cancelled'].includes(job.state);
+      if (netJobEnded.current && !ended) return;
+      netJobEnded.current = ended;
       setNetJob(job);
       const stage: Stage =
         job.state === 'done'

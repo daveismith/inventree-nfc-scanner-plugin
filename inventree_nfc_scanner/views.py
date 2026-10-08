@@ -19,16 +19,9 @@ from . import ndef
 from .machine import NETWORK_DRIVER, NfcScannerMachine, NfcScannerStatus
 from .models import Job, ScannerCommand
 from .serializers import JobCreateSerializer, JobSerializer, UsbJobSerializer
-from .sync import enqueue, handle_sync, retire
+from .sync import enqueue, handle_sync, retire, shared_cache
 
 logger = logging.getLogger("inventree")
-
-
-def shared_cache() -> bool:
-    """Whether the cache is one every process sees (Redis), rather than per process."""
-    from django.conf import settings
-
-    return "LocMemCache" not in settings.CACHES.get("default", {}).get("BACKEND", "")
 
 
 def plugin():

@@ -441,7 +441,7 @@ def run(api, admin, scanner, machine, loc):
     sync({
         "ack": cancel_seq,
         "msgs": [
-            {"seq": 7, "rsp": "cancel", "ok": False, "id": job["id"], "error": "busy"}
+            {"seq": 9, "rsp": "cancel", "ok": False, "id": job["id"], "error": "busy"}
         ],
     })
     st, j = api.call("GET", f"{P}/api/jobs/{job['id']}/", token=admin)
@@ -452,7 +452,7 @@ def run(api, admin, scanner, machine, loc):
     )
     sync({
         "ack": cancel_seq,
-        "msgs": [{"seq": 8, "evt": "failed", "id": job["id"], "error": "cancelled"}],
+        "msgs": [{"seq": 10, "evt": "failed", "id": job["id"], "error": "cancelled"}],
     })
     st, j = api.call("GET", f"{P}/api/jobs/{job['id']}/", token=admin)
     check(

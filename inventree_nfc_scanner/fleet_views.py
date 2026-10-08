@@ -234,8 +234,12 @@ class FirmwareUploadView(APIView):
 
 
 class FirmwareDetailView(APIView):
-    """DELETE api/fleet/firmware/<pk>/ : remove a release's images (and its record, when no
-    deployment refers to it)."""
+    """DELETE api/fleet/firmware/<pk>/ : remove a release's images, as pruning does.
+
+    The record of a release from GitHub is kept, so that the next check does not fetch it
+    again (it is held, without images); so is that of any release a deployment's history
+    names. An uploaded release nothing refers to goes entirely. Uploading a release again
+    brings back its images either way. Refused while a deployment of it is unfinished."""
 
     permission_classes = [IsFleetAdmin]
 
@@ -251,7 +255,7 @@ class FirmwareDetailView(APIView):
                 "detail": "a deployment of it is not finished; cancel it first"
             })
         fwlib.remove_files(fw)
-        if not fw.deployments.exists():
+        if fw.source == Firmware.Source.UPLOAD and not fw.deployments.exists():
             fw.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         return Response(firmware_dict(fw))

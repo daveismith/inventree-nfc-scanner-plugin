@@ -25,7 +25,9 @@ GitHub's rate limit (60 calls an hour per address; a check uses two or three).
 A server without internet access takes the same three files by upload, checked the same way.
 
 The images are kept in InvenTree's media storage, so its backups include them. Only the newest
-*Firmware releases kept* (5) keep their images; older ones keep their record.
+*Firmware releases kept* (5) keep their images; older ones keep their record. *Delete* on the
+fleet page does the same to one release. A release without images is not listed and is not
+fetched again; uploading it brings it back.
 
 ## Deploying
 

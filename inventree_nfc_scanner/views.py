@@ -183,6 +183,10 @@ def scanner_dict(machine: NfcScannerMachine) -> dict:
         else None,
         "id": str(machine.pk),
         "name": machine.name,
+        # So a browser can tell which of these is the scanner plugged into it.
+        "reader": machine.get_setting("READER_ID", "D") or None
+        if machine.machine_config.driver == NETWORK_DRIVER
+        else None,
         "driver": machine.machine_config.driver,
         "status": machine.status.name.lower(),
         "status_text": machine.status_text,

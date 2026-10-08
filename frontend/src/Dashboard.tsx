@@ -113,9 +113,20 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
                   )}
                 </Table.Td>
                 <Table.Td>
-                  <Badge color={s.online ? 'green' : 'red'} variant='light'>
-                    {s.status}
-                  </Badge>
+                  <Group gap={4} wrap='nowrap'>
+                    {/* Its network link, as the server sees it. */}
+                    <Badge color={s.online ? 'green' : 'red'} variant='light'>
+                      {s.status}
+                    </Badge>
+                    {/* And whether it is the one plugged in here, which is a separate route. */}
+                    {usb.link === 'open' &&
+                      s.reader &&
+                      usb.info?.reader === s.reader && (
+                        <Badge color='green' variant='outline'>
+                          USB here
+                        </Badge>
+                      )}
+                  </Group>
                 </Table.Td>
                 <Table.Td>{ago(s.last_seen)}</Table.Td>
                 <Table.Td>

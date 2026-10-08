@@ -424,67 +424,83 @@ function FleetItem({ context }: { context: InvenTreePluginContext }) {
             ) : null}
             <Table fz='sm' verticalSpacing={4}>
               <Table.Tbody>
-                {fleet.firmware.map((f) => (
-                  <Table.Tr key={f.id}>
-                    <Table.Td>
-                      <Group gap={4}>
-                        {f.release_url ? (
-                          <Anchor
-                            href={f.release_url}
-                            target='_blank'
-                            size='sm'
-                          >
-                            {f.version}
-                          </Anchor>
-                        ) : (
-                          <Text size='sm'>{f.version}</Text>
-                        )}
-                        {f.prerelease && (
-                          <Badge size='xs' variant='light'>
-                            pre-release
-                          </Badge>
-                        )}
-                        {f.version === fleet.newest && (
-                          <Badge size='xs' color='green' variant='light'>
-                            newest
-                          </Badge>
-                        )}
-                      </Group>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size='xs' c='dimmed'>
-                        {f.source === 'github' ? 'GitHub' : 'uploaded'},{' '}
-                        {ago(f.added_at)}, {(f.size / 1024).toFixed(0)} KB
-                      </Text>
-                      {f.incompatible && (
-                        <Text size='xs' c='orange'>
-                          {f.incompatible}
-                        </Text>
-                      )}
-                      {!f.available && (
+                {fleet.firmware
+                  .filter((f) => f.available)
+                  .map((f) => (
+                    <Table.Tr key={f.id}>
+                      <Table.Td>
+                        <Group gap={4}>
+                          {f.release_url ? (
+                            <Anchor
+                              href={f.release_url}
+                              target='_blank'
+                              size='sm'
+                            >
+                              {f.version}
+                            </Anchor>
+                          ) : (
+                            <Text size='sm'>{f.version}</Text>
+                          )}
+                          {f.prerelease && (
+                            <Badge size='xs' variant='light'>
+                              pre-release
+                            </Badge>
+                          )}
+                          {f.version === fleet.newest && (
+                            <Badge size='xs' color='green' variant='light'>
+                              newest
+                            </Badge>
+                          )}
+                        </Group>
+                      </Table.Td>
+                      <Table.Td>
                         <Text size='xs' c='dimmed'>
-                          image pruned
+                          {f.source === 'github' ? 'GitHub' : 'uploaded'},{' '}
+                          {ago(f.added_at)}, {(f.size / 1024).toFixed(0)} KB
                         </Text>
-                      )}
-                    </Table.Td>
-                    <Table.Td>
-                      <Button
-                        size='compact-xs'
-                        variant='subtle'
-                        color='red'
-                        disabled={busy}
-                        onClick={() => {
-                          if (window.confirm(`Delete firmware ${f.version}?`))
-                            act(() => deleteFirmware(api, f.id));
-                        }}
-                      >
-                        delete
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
+                        {f.incompatible && (
+                          <Text size='xs' c='orange'>
+                            {f.incompatible}
+                          </Text>
+                        )}
+                        {!f.available && (
+                          <Text size='xs' c='dimmed'>
+                            image pruned
+                          </Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          size='compact-xs'
+                          variant='subtle'
+                          color='red'
+                          disabled={busy}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Delete firmware ${f.version}? Its images go; its record stays, so the release check does not fetch it again. Uploading it brings it back.`
+                              )
+                            )
+                              act(
+                                () => deleteFirmware(api, f.id),
+                                () => setNote(`Firmware ${f.version} deleted.`)
+                              );
+                          }}
+                        >
+                          delete
+                        </Button>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
               </Table.Tbody>
             </Table>
+            {fleet.firmware.some((f) => !f.available) && (
+              <Text size='xs' c='dimmed'>
+                {fleet.firmware.filter((f) => !f.available).length} older or
+                deleted release(s) are not shown: their images are gone.
+                Uploading one brings it back.
+              </Text>
+            )}
             <Text fw={600} size='sm'>
               Upload a release
             </Text>

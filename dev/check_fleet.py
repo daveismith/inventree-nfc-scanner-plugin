@@ -247,6 +247,8 @@ def prepare(api, admin):
         )
         assert st == 201, machine
     mid = machine["pk"]
+    # Left inactive by the last run, so it does not sit on the dashboard as an offline scanner.
+    api.call("PATCH", f"/api/machine/{mid}/", token=admin, body={"active": True})
     api.call(
         "PUT",
         f"/api/machine/{mid}/settings/D/READER_ID/",
@@ -923,6 +925,24 @@ def run(api, admin, scanner, loc):
         if f["version"].startswith((f"90.{stamp}.", f"89.{stamp}.")) and f["available"]
     ]
     check(not left, "and remove releases", [f["version"] for f in left])
+
+    # Leave nothing on show: its machine off the dashboard, and a release check of the real
+    # repository recorded in place of the stand-in's.
+    st, _ = api.call(
+        "PATCH", f"/api/machine/{prepare.mid}/", token=admin, body={"active": False}
+    )
+    check(
+        st == 200,
+        "its machine is deactivated, so it leaves no offline scanner behind",
+        st,
+    )
+    st, result = api.call("POST", f"{P}/api/fleet/check/", token=admin)
+    check(
+        st == 200
+        and not any("check/firmware" in e or "90." in e for e in result["errors"]),
+        "and a check of the real repository replaces the stand-in's on the fleet page",
+        (st, result),
+    )
 
 
 def main():

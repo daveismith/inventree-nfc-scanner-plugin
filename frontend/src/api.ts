@@ -17,6 +17,7 @@ export interface TagPayload {
 export interface Scanner {
   id: string;
   name: string;
+  reader: string | null;
   driver: string;
   status: string;
   status_text: string;

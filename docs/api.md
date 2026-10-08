@@ -81,6 +81,7 @@ The network scanners (InvenTree machines of type *NFC Scanner*), with their stat
 [{
   "id": "79b50fa8-11cd-4430-b239-8069c9e56f06",
   "name": "Desk scanner",
+  "reader": "nfc-34b7da52a084",
   "driver": "nfc-network",
   "status": "online",
   "status_text": "last seen 2026-10-06 02:11:51 UTC",
@@ -292,8 +293,11 @@ with a different image.
 
 #### `DELETE api/fleet/firmware/<id>/`
 
-Delete a release's images; its record goes too unless a deployment refers to it. 400 while a
-deployment of it is unfinished.
+Delete a release's images, as pruning does. The record of a release from GitHub is kept (so
+the next check does not fetch it again), as is that of any release a deployment's history
+names; an uploaded release nothing refers to goes entirely (204). Uploading the release again
+brings its images back. 400 while a deployment of it is unfinished. The fleet page lists only
+releases whose images are held.
 
 #### `POST api/fleet/deploy/`
 

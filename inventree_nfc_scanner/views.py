@@ -183,6 +183,10 @@ def scanner_dict(machine: NfcScannerMachine) -> dict:
         else None,
         "id": str(machine.pk),
         "name": machine.name,
+        # So a browser can tell which of these is the scanner plugged into it.
+        "reader": machine.get_setting("READER_ID", "D") or None
+        if machine.machine_config.driver == NETWORK_DRIVER
+        else None,
         "driver": machine.machine_config.driver,
         "status": machine.status.name.lower(),
         "status_text": machine.status_text,
@@ -251,6 +255,17 @@ class JobListView(APIView):
         if shared_cache() and machine.status == NfcScannerStatus.OFFLINE:
             raise ValidationError({
                 "scanner": "That scanner is offline; a job for it would only wait."
+            })
+
+        from .models import Deployment
+
+        if Deployment.objects.filter(
+            scanner__reader_id=machine.get_setting("READER_ID", "D"),
+            via="network",
+            state__in=Deployment.IN_FLIGHT,
+        ).exists():
+            raise ValidationError({
+                "scanner": "That scanner is updating its firmware; try again in a minute."
             })
 
         kind = d.get("kind", Job.Kind.PROGRAM)
@@ -363,4 +378,7 @@ class SyncView(APIView):
         max_s = (
             int(plg.get_setting("LONG_POLL_MAX_S") or 0) if (plg and long_poll) else 0
         )
-        return Response(handle_sync(machine, body, long_poll_max_s=max_s))
+        origin = request.build_absolute_uri("/").rstrip("/")
+        return Response(
+            handle_sync(machine, body, long_poll_max_s=max_s, origin=origin)
+        )

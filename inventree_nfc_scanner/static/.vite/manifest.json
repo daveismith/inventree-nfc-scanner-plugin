@@ -1,24 +1,42 @@
 {
-  "_scanner-BLxPl4Ln.js": {
-    "file": "assets/scanner-BLxPl4Ln.js",
-    "name": "scanner"
+  "_UpdateNotice-By7f31dM.js": {
+    "file": "assets/UpdateNotice-By7f31dM.js",
+    "name": "UpdateNotice",
+    "imports": [
+      "_api-QiwAJbNU.js"
+    ]
+  },
+  "_api-QiwAJbNU.js": {
+    "file": "assets/api-QiwAJbNU.js",
+    "name": "api"
   },
   "src/Dashboard.tsx": {
-    "file": "Dashboard-BKZf-fHl.js",
+    "file": "Dashboard-p7FLpk6M.js",
     "name": "Dashboard",
     "src": "src/Dashboard.tsx",
     "isEntry": true,
     "imports": [
-      "_scanner-BLxPl4Ln.js"
+      "_api-QiwAJbNU.js",
+      "_UpdateNotice-By7f31dM.js"
+    ]
+  },
+  "src/Fleet.tsx": {
+    "file": "Fleet-DmFH348r.js",
+    "name": "Fleet",
+    "src": "src/Fleet.tsx",
+    "isEntry": true,
+    "imports": [
+      "_api-QiwAJbNU.js"
     ]
   },
   "src/Panel.tsx": {
-    "file": "Panel-bVmW9iKn.js",
+    "file": "Panel-ztKTmZCm.js",
     "name": "Panel",
     "src": "src/Panel.tsx",
     "isEntry": true,
     "imports": [
-      "_scanner-BLxPl4Ln.js"
+      "_api-QiwAJbNU.js",
+      "_UpdateNotice-By7f31dM.js"
     ]
   }
 }

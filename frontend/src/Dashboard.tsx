@@ -14,6 +14,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getScanners, type Scanner } from './api';
 import { scanner } from './scanner';
 import { hasWebSerial } from './serial';
+import { UpdateNotice } from './UpdateNotice';
 
 function ago(iso: string | null): string {
   if (!iso) return 'never';
@@ -32,8 +33,8 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
   const usb = useSyncExternalStore(scanner.subscribe, scanner.getState);
 
   useEffect(() => {
-    scanner.attach(context.navigate);
-  }, [context.navigate]);
+    scanner.attach(context.navigate, context.api);
+  }, [context.navigate, context.api]);
 
   useEffect(() => {
     const load = () =>
@@ -93,6 +94,7 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
           )}
         </Group>
       )}
+      {hasWebSerial() && <UpdateNotice />}
       {scanners.length === 0 ? (
         <Text c='dimmed' size='sm'>
           No network NFC scanners are configured.
@@ -111,9 +113,20 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
                   )}
                 </Table.Td>
                 <Table.Td>
-                  <Badge color={s.online ? 'green' : 'red'} variant='light'>
-                    {s.status}
-                  </Badge>
+                  <Group gap={4} wrap='nowrap'>
+                    {/* Its network link, as the server sees it. */}
+                    <Badge color={s.online ? 'green' : 'red'} variant='light'>
+                      {s.status}
+                    </Badge>
+                    {/* And whether it is the one plugged in here, which is a separate route. */}
+                    {usb.link === 'open' &&
+                      s.reader &&
+                      usb.info?.reader === s.reader && (
+                        <Badge color='green' variant='outline'>
+                          USB here
+                        </Badge>
+                      )}
+                  </Group>
                 </Table.Td>
                 <Table.Td>{ago(s.last_seen)}</Table.Td>
                 <Table.Td>

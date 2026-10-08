@@ -14,6 +14,11 @@ Two routes to a tag, behind one "Program tag" button on every stock location's p
   WebSerial, computers without the scanner, and headless scanners in automated storage.
   Each network scanner is an InvenTree *machine*.
 
+Admins can keep every scanner's firmware current from InvenTree: releases are fetched from the
+firmware's GitHub releases, and a deployment reaches a network scanner on its next call and a
+USB scanner the next time a browser connects to it. See
+[docs/fleet-updates.md](docs/fleet-updates.md).
+
 Looking a bin up needs no plugin: the desk scanner types the location's barcode into
 InvenTree's scan dialog as a keyboard.
 
@@ -121,7 +126,9 @@ plugin_dev:
 
 `dev/` runs InvenTree 1.4.3 in Docker with this plugin installed from the source tree;
 see [dev/README.md](dev/README.md). `dev/check.py` exercises the whole API against it,
-including a scanner played through `/sync`, and the firmware repository's
+including a scanner played through `/sync`; `dev/check_fleet.py` does the same for firmware
+updates, and `dev/usb_update.py` installs one on a real USB scanner as the browser would. The
+firmware repository's
 `tools/sync_bridge.py` lets a real USB scanner stand in for a network one.
 
 ## How it works
@@ -157,3 +164,11 @@ machine type and driver, every endpoint, long polling, a job carried to a real s
 `sync_bridge.py`, and the UID landing as the location's barcode. Not yet verified: the
 panel and dashboard item rendered in a browser (their bundles build and are served, but
 nobody has clicked them), and the WebSerial route from the panel.
+
+Firmware updates (the fleet-updates branch) are verified against the same instance with the
+real scanner: a release uploaded and checked, a deployment over the network (downloaded,
+restarted, confirmed), and one over USB through `dev/usb_update.py`, which follows the
+browser's sequence. Not yet verified: the fleet dashboard item and the update notice in a
+browser, and fetching a real release from GitHub. The repository is public and the check
+reaches it with no token, but no release has been tagged yet; taking a release is checked
+against a stand-in for GitHub.

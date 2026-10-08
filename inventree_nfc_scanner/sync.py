@@ -19,7 +19,7 @@ import datetime
 import logging
 import time
 
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models import Max
 from django.utils import timezone
 
@@ -32,6 +32,11 @@ from .models import Job, ScannerCommand, ScannerCounter, ScannerMessage
 logger = logging.getLogger("inventree")
 
 PROTO_VERSION = 1
+RESULT_GRACE_S = (
+    120  # after a job's own timeout, how long its result may take to arrive
+)
+UNFINISHED = ("queued", "sent", "waiting", "writing")
+TAKEN = ("sent", "waiting", "writing")  # the scanner has (or may have) the job
 POLL_STEP_S = 0.25
 SEQ_MAX = 2**31 - 1
 KEEP_BOOKKEEPING_FOR = datetime.timedelta(
@@ -141,8 +146,16 @@ def _link_barcode(job: Job) -> None:
         job.save()
 
 
-def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
+def apply_message(machine: NfcScannerMachine, msg: dict, scanner=None) -> None:
     """Act on one message from the scanner."""
+    if msg.get("rsp") == "ota" or msg.get("evt") == "ota":
+        # A firmware update's progress; its id is a deployment's, not a job's.
+        if scanner is not None:
+            from .fleet import apply_ota_message
+
+            apply_ota_message(scanner, msg)
+        return
+
     job_id = _seq(msg.get("id"))
     job = None
     if job_id is not None:
@@ -239,7 +252,7 @@ def retire(commands) -> None:
 
 
 def handle_sync(
-    machine: NfcScannerMachine, body: dict, *, long_poll_max_s: int
+    machine: NfcScannerMachine, body: dict, *, long_poll_max_s: int, origin: str = ""
 ) -> dict:
     """Process one /sync call and build its answer. Raises ValidationError for a body that is
     not what a scanner sends."""
@@ -255,6 +268,20 @@ def handle_sync(
     if not isinstance(msgs, list) or not all(isinstance(m, dict) for m in msgs):
         raise ValidationError({"msgs": "expected a list of objects"})
     wait_s = min(wait, long_poll_max_s)
+
+    from . import fleet
+
+    fw = body.get("fw")
+    scanner = fleet.note_scanner(
+        str(body.get("reader", "")),
+        fw=fw if isinstance(fw, str) else "",
+        proto=body.get("proto"),
+        boot=boot,
+        via="network",
+    )
+
+    if scanner.restarted:
+        lose_jobs_of_restarted(config)
 
     machine.touch(boot)
     if machine.status in (NfcScannerStatus.OFFLINE, NfcScannerStatus.UNKNOWN):
@@ -282,15 +309,23 @@ def handle_sync(
         )
         if fresh:
             try:
-                apply_message(machine, msg)
+                apply_message(machine, msg, scanner)
             except Exception:  # one bad message must not stall the exchange
                 logger.exception(
                     "NFC scanner %s: message %s not applied", config.pk, msg
                 )
 
-    # 3. Hand out what is waiting; hold the call for more if asked and allowed.
+    # 3. Hand out what is waiting; hold the call for more if asked and allowed. A firmware
+    # update waiting for this scanner is started here, when it is free for one.
     deadline = time.monotonic() + wait_s
     while True:
+        if origin:
+            try:
+                fleet.issue_network(machine, scanner, origin)
+            except Exception:  # an update must never stall the exchange
+                logger.exception(
+                    "NFC scanner %s: could not start its update", config.pk
+                )
         commands = list(pending_commands(config))
         if commands or time.monotonic() >= deadline:
             break
@@ -333,6 +368,64 @@ def handle_sync(
         "ack": highest,
         "cmds": [dict(command.payload, seq=command.seq) for command in commands],
     }
+
+
+def lose_jobs_of_restarted(config) -> None:
+    """A scanner that restarted has forgotten the jobs it had acted on: one whose command it
+    acknowledged will never be finished, so it fails now. One whose command it never
+    acknowledged is sent again, since a restarted scanner's acknowledgements start over."""
+    acked_jobs = ScannerCommand.objects.filter(
+        machine=config,
+        acked_at__isnull=False,
+        payload__cmd__in=["program", "wipe"],
+        job__isnull=False,
+    ).values_list("job_id", flat=True)
+    for job_id in list(
+        Job.objects.filter(machine=config, state__in=TAKEN)
+        .filter(
+            models.Q(state__in=["waiting", "writing"]) | models.Q(pk__in=acked_jobs)
+        )
+        .values_list("pk", flat=True)
+    ):
+        with transaction.atomic():
+            job = (
+                Job.objects.select_for_update()
+                .filter(pk=job_id, state__in=TAKEN)
+                .first()
+            )
+            if job:
+                _finish(
+                    job,
+                    Job.State.FAILED,
+                    error="scanner_restarted",
+                    error_detail="the scanner restarted before the job finished",
+                )
+
+
+def expire_jobs() -> None:
+    """A job the scanner took but never reported on, well past its own timeout, has been lost
+    (a result that went missing, a scanner that restarted unseen): it fails, rather than wait
+    for ever and block what comes after it. Run periodically."""
+    now = timezone.now()
+    for job in Job.objects.filter(state__in=TAKEN, machine__isnull=False):
+        if (
+            job.updated_at + datetime.timedelta(seconds=job.timeout_s + RESULT_GRACE_S)
+            > now
+        ):
+            continue
+        with transaction.atomic():
+            job = (
+                Job.objects.select_for_update()
+                .filter(pk=job.pk, state__in=TAKEN)
+                .first()
+            )
+            if job:
+                _finish(
+                    job,
+                    Job.State.FAILED,
+                    error="no_result",
+                    error_detail="the scanner never reported how the job ended",
+                )
 
 
 def mark_stale_scanners(offline_after_s: int) -> None:

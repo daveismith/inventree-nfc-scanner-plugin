@@ -112,10 +112,82 @@ class InvenTreeNFCScanner(
             "validator": [int, MinValueValidator(10), MaxValueValidator(3600)],
             "default": 40,
         },
+        # Fleet firmware updates (docs/fleet-updates.md)
+        "FIRMWARE_REPO": {
+            "name": _("Firmware repository"),
+            "description": _(
+                "The GitHub repository (owner/name) whose releases carry the scanner firmware"
+            ),
+            "default": "daveismith/inventree_nfc_scanner",
+        },
+        "FIRMWARE_CHECK_HOURS": {
+            "name": _("Check for firmware every (hours)"),
+            "description": _("How often to look for new releases; 0 only on demand"),
+            "validator": [int, MinValueValidator(0), MaxValueValidator(720)],
+            "default": 24,
+        },
+        "FIRMWARE_PRERELEASES": {
+            "name": _("Include pre-releases"),
+            "description": _("Fetch and offer releases marked as pre-releases"),
+            "validator": bool,
+            "default": False,
+        },
+        "FIRMWARE_AUTO_DEPLOY": {
+            "name": _("Deploy new releases automatically"),
+            "description": _(
+                "A new stable release goes to every scanner running something older, as soon as it is fetched"
+            ),
+            "validator": bool,
+            "default": False,
+        },
+        "FIRMWARE_USB_POLICY": {
+            "name": _("USB update policy"),
+            "description": _(
+                "Whether the user at a USB scanner may put an update off; a deployment can override it"
+            ),
+            "choices": [
+                ("deferrable", _("The user may choose later")),
+                ("required", _("The update runs before the scanner can be used")),
+            ],
+            "default": "deferrable",
+        },
+        "FIRMWARE_MAX_DOWNLOADS": {
+            "name": _("Network updates at once"),
+            "description": _(
+                "How many network scanners may download firmware at the same time; each holds a server worker"
+            ),
+            "validator": [int, MinValueValidator(1), MaxValueValidator(20)],
+            "default": 2,
+        },
+        "FIRMWARE_KEEP": {
+            "name": _("Firmware releases kept"),
+            "description": _(
+                "Images of older releases are deleted (their records stay); 0 keeps everything"
+            ),
+            "validator": [int, MinValueValidator(0), MaxValueValidator(100)],
+            "default": 5,
+        },
+        "FIRMWARE_GITHUB_TOKEN": {
+            "name": _("GitHub token"),
+            "description": _(
+                "Optional. Only to raise GitHub's rate limit, or for a private repository: a fine-grained, "
+                "read-only token for that repository"
+            ),
+            "default": "",
+            "protected": True,
+        },
+        "FIRMWARE_API": {
+            "name": _("GitHub API"),
+            "description": _(
+                "Leave as it is, unless the releases are on GitHub Enterprise (or a test server)"
+            ),
+            "default": "https://api.github.com",
+        },
     }
 
     SCHEDULED_TASKS = {
         "check_scanners": {"func": "check_scanners", "schedule": "I", "minutes": 1},
+        "check_firmware": {"func": "check_firmware", "schedule": "I", "minutes": 60},
     }
 
     def __init__(self):
@@ -136,9 +208,33 @@ class InvenTreeNFCScanner(
 
     def check_scanners(self):
         """Mark scanners that have gone quiet as offline (runs every minute)."""
-        from .sync import mark_stale_scanners
+        from .sync import expire_jobs, mark_stale_scanners
 
         mark_stale_scanners(int(self.get_setting("SCANNER_OFFLINE_S") or 40))
+        expire_jobs()
+
+        from .fleet import check_deployments
+
+        check_deployments()
+
+    def check_firmware(self):
+        """Look for new firmware releases, as often as the setting says (runs hourly)."""
+        import datetime
+
+        from django.utils import timezone
+
+        from .firmware import last_check
+        from .fleet_views import run_check
+
+        hours = int(self.get_setting("FIRMWARE_CHECK_HOURS") or 0)
+        if hours <= 0:
+            return
+        last = last_check()
+        if last and last.get("at"):
+            at = datetime.datetime.fromisoformat(last["at"])
+            if timezone.now() - at < datetime.timedelta(hours=hours, minutes=-5):
+                return
+        run_check()
 
     # Machines
 
@@ -160,7 +256,7 @@ class InvenTreeNFCScanner(
         """The endpoints; see docs/api.md."""
         from django.urls import path
 
-        from . import views
+        from . import fleet_views, views
 
         return [
             path("sync/", views.SyncView.as_view(), name="sync"),
@@ -186,6 +282,68 @@ class InvenTreeNFCScanner(
                 "api/jobs/<int:pk>/cancel/",
                 views.JobCancelView.as_view(),
                 name="job-cancel",
+            ),
+            # Fleet updates
+            path("api/fleet/", fleet_views.FleetView.as_view(), name="fleet"),
+            path(
+                "api/fleet/check/",
+                fleet_views.FleetCheckView.as_view(),
+                name="fleet-check",
+            ),
+            path(
+                "api/fleet/upload/",
+                fleet_views.FirmwareUploadView.as_view(),
+                name="fleet-upload",
+            ),
+            path(
+                "api/fleet/firmware/<int:pk>/",
+                fleet_views.FirmwareDetailView.as_view(),
+                name="fleet-firmware",
+            ),
+            path(
+                "api/fleet/scanners/<str:reader>/",
+                fleet_views.ScannerDetailView.as_view(),
+                name="fleet-scanner",
+            ),
+            path(
+                "api/fleet/deploy/",
+                fleet_views.DeployView.as_view(),
+                name="fleet-deploy",
+            ),
+            path(
+                "api/fleet/deployments/",
+                fleet_views.DeploymentListView.as_view(),
+                name="fleet-deployments",
+            ),
+            path(
+                "api/fleet/deployments/<int:pk>/cancel/",
+                fleet_views.DeploymentCancelView.as_view(),
+                name="fleet-deployment-cancel",
+            ),
+            path(
+                "api/usb/checkin/",
+                fleet_views.UsbCheckinView.as_view(),
+                name="usb-checkin",
+            ),
+            path(
+                "api/usb/deployments/<int:pk>/start/",
+                fleet_views.UsbStartView.as_view(),
+                name="usb-start",
+            ),
+            path(
+                "api/usb/deployments/<int:pk>/defer/",
+                fleet_views.UsbDeferView.as_view(),
+                name="usb-defer",
+            ),
+            path(
+                "api/usb/deployments/<int:pk>/report/",
+                fleet_views.UsbReportView.as_view(),
+                name="usb-report",
+            ),
+            path(
+                "firmware/<str:version>/<str:name>",
+                fleet_views.FirmwareImageView.as_view(),
+                name="firmware-image",
             ),
         ]
 
@@ -222,8 +380,21 @@ class InvenTreeNFCScanner(
         ]
 
     def get_ui_dashboard_items(self, request, context: dict, **kwargs):
-        """The scanners and what they last saw."""
-        return [
+        """The scanners and what they last saw; for admins, their firmware too."""
+        from .fleet_views import is_fleet_admin
+
+        items = []
+        if is_fleet_admin(getattr(request, "user", None)):
+            items.append({
+                "key": "nfc-fleet",
+                "title": "NFC scanner firmware",
+                "description": "Firmware on every scanner, and updates",
+                "icon": "ti:nfc:outline",
+                "source": self.plugin_static_file("Fleet.js:RenderNfcFleetItem"),
+                "options": {"width": 6, "height": 4},
+                "context": {"api": "/plugin/nfcscanner/api/"},
+            })
+        return items + [
             {
                 "key": "nfc-scanners",
                 "title": "NFC scanners",

@@ -48,6 +48,7 @@ export default defineConfig({
       input: [
         './src/Panel.tsx',
         './src/Dashboard.tsx',
+        './src/Fleet.tsx',
         
       ],
       output: [

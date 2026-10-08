@@ -45,6 +45,7 @@ import {
 } from './api';
 import { scanner } from './scanner';
 import { hasWebSerial, type ScannerMessage } from './serial';
+import { UpdateNotice } from './UpdateNotice';
 
 interface PanelContext {
   location: number | string;
@@ -109,8 +110,8 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   // --- USB route: the connection is the service's; this panel only watches it
   const usb = useSyncExternalStore(scanner.subscribe, scanner.getState);
   useEffect(() => {
-    scanner.attach(context.navigate);
-  }, [context.navigate]);
+    scanner.attach(context.navigate, context.api);
+  }, [context.navigate, context.api]);
 
   // --- network route
   const [scanners, setScanners] = useState<Scanner[]>([]);
@@ -415,7 +416,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
 
   // --- rendering
 
-  const usbReady = usb.link === 'open';
+  const usbReady = usb.link === 'open' && !usb.updating;
   const canOverwrite =
     progress.stage === 'failed' && progress.error === 'not_blank';
 
@@ -465,6 +466,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
             <Badge color='gray'>not connected</Badge>
           )}
         </Group>
+        <UpdateNotice />
         {hasWebSerial() && (
           <Group>
             {usb.link === 'closed' && (

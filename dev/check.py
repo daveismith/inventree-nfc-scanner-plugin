@@ -484,7 +484,7 @@ def run(api, admin, scanner, machine, loc):
     )
     if st != 201:
         st, found = api.call("GET", "/api/stock/location/?search=Bin%20A2", token=admin)
-        loc2 = next(l for loc_ in found if loc_["name"] == "Bin A2 (check)")
+        loc2 = next(x for x in found if x["name"] == "Bin A2 (check)")
     st, body = api.call(
         "POST",
         f"{P}/api/location/{loc2['pk']}/link/",

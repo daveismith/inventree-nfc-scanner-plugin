@@ -19,6 +19,8 @@ InvenTree's scan dialog as a keyboard.
 
 Targets InvenTree 1.4.3 (needs the machine framework and the plugin UI of 1.x).
 
+Known gaps are listed in [docs/open-issues.md](docs/open-issues.md).
+
 ## Install on the server
 
 InvenTree in Docker, as on the Raspberry Pi:

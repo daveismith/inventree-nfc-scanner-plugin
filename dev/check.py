@@ -151,7 +151,7 @@ def prepare(api, admin):
     time.sleep(2)
 
     st, locations = api.call("GET", "/api/stock/location/?search=Bin%20A1", token=admin)
-    loc = next((l for l in locations if l["name"] == "Bin A1"), None)
+    loc = next((x for x in locations if x["name"] == "Bin A1"), None)
     if loc is None:
         st, loc = api.call(
             "POST",

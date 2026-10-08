@@ -46,6 +46,9 @@ and the compose file mounts this repository there. At every start InvenTree runs
   `inventree_nfc_scanner/static/`) and then the same restart, which re-collects static files.
   For live reloading instead, see "Frontend development" in the main README.
 - **A new migration** is applied at the restart too.
+- **A panel or dashboard script that answers 404** after restarting the server and the worker
+  together: both copy the plugin's static files at once and can leave a hashed bundle under a
+  suffixed name. `docker exec nfcdev-server invoke static` puts it right.
 
 `dev/check.py` plays the scanner itself, with the reader id of the machine it creates on
 its first run. A real scanner configured for the same instance would collect the checks'
@@ -76,6 +79,10 @@ own, so a real scanner can stay on the air, and removes what it made:
 ```sh
 python3 check_fleet.py
 ```
+
+`--auto-deploy` adds the checks of automatic deployment. That reaches every scanner on the
+server, real ones included, so take them off the network first (`nfcprog.py net disable`); the
+check withdraws what it gave them and confirms none got past pending.
 
 `usb_update.py --port /dev/cu.usbmodem…` does what the browser does when it connects to a
 USB scanner with an update waiting: check in, claim, fetch, stream it over serial, and check

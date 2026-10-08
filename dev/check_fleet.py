@@ -282,7 +282,11 @@ def get_setting(api, admin, key):
 
 
 def run(api, admin, scanner, loc):
-    state = {"boot": int(time.time()) % 100000, "ack": 0, "seq": 0, "fw": "1.0.0"}
+    # Versions of this run's own: the scanner's starting firmware, and the releases it makes
+    # (90.<stamp>.N), so that nothing a real server holds is touched or collided with.
+    stamp = int(time.time())
+    OLD = f"89.{stamp}.0"
+    state = {"boot": int(time.time()) % 100000, "ack": 0, "seq": 0, "fw": OLD}
 
     def sync(msgs=(), **extra):
         body = {
@@ -333,7 +337,7 @@ def run(api, admin, scanner, loc):
     state["ack"] = 10**6
     sync()
     state["ack"] = 0
-    restart("1.0.0")
+    restart(OLD)
 
     # --- who may do what
     st, _ = api.call("GET", f"{P}/api/fleet/", token=scanner)
@@ -344,7 +348,7 @@ def run(api, admin, scanner, loc):
         "POST",
         f"{P}/api/usb/checkin/",
         token=scanner,
-        body={"reader": READER, "fw": "1.0.0"},
+        body={"reader": READER, "fw": OLD},
     )
     check(
         st == 403, "a user who may not program tags cannot check in a USB scanner", st
@@ -354,7 +358,7 @@ def run(api, admin, scanner, loc):
     sc = fleet_scanner()
     check(
         sc is not None
-        and sc["fw"] == "1.0.0"
+        and sc["fw"] == OLD
         and sc["last_via"] == "network"
         and sc["machine"]["name"] == MACHINE,
         "a sync puts the scanner in the registry, with its version and machine",
@@ -362,9 +366,8 @@ def run(api, admin, scanner, loc):
     )
 
     # --- releases: upload and its checks
-    stamp = int(time.time())
     v = lambda minor, suffix="": f"90.{stamp}.{minor}{suffix}"  # noqa: E731
-    r1, r2, r_old = release(v(1)), release(v(2)), release("1.0.0")
+    r1, r2, r_old = release(v(1)), release(v(2)), release(OLD)
     st, body = multipart(
         api, f"{P}/api/fleet/upload/", admin, {"manifest": ("manifest.json", b"{}")}
     )
@@ -441,7 +444,7 @@ def run(api, admin, scanner, loc):
     )
     st, body = deploy(fw_old["id"])
     check(
-        st == 200 and "runs 1.0.0 already" in body["results"][0].get("refused", ""),
+        st == 200 and f"runs {OLD} already" in body["results"][0].get("refused", ""),
         "nor one the scanner runs already",
         body,
     )
@@ -539,11 +542,11 @@ def run(api, admin, scanner, loc):
     check(
         d["state"] == "downloading"
         and d["via"] == "network"
-        and d["from_version"] == "1.0.0",
+        and d["from_version"] == OLD,
         "the scanner's progress moves it: downloading",
         d,
     )
-    out = restart("1.0.0")
+    out = restart(OLD)
     d = {x["id"]: x for x in deployments()}[third]
     check(
         d["state"] in ("pending", "sent")
@@ -560,10 +563,10 @@ def run(api, admin, scanner, loc):
     say(rsp="ota", ok=True, id=third)
     say(evt="ota", state="downloading")
     say(evt="ota", state="restarting")
-    restart("1.0.0")
+    restart(OLD)
     d = {x["id"]: x for x in deployments()}[third]
     check(
-        d["state"] == "rolled_back" and "1.0.0" in d["detail"],
+        d["state"] == "rolled_back" and OLD in d["detail"],
         "coming back on the old version after restarting is a rollback",
         d,
     )
@@ -781,6 +784,7 @@ def run(api, admin, scanner, loc):
             "FIRMWARE_API",
             "FIRMWARE_PRERELEASES",
             "FIRMWARE_KEEP",
+            "FIRMWARE_AUTO_DEPLOY",
         )
     }
     try:
@@ -823,6 +827,80 @@ def run(api, admin, scanner, loc):
             "with where it came from",
             fetched,
         )
+
+        # Automatic deployment: the newest release this plugin can drive goes out; a newer one
+        # it cannot (it needs a newer plugin) is held, shown, and not deployed; and nothing
+        # about it breaks the check. It goes to every scanner running something older, real
+        # ones included, so it runs only when asked (--auto-deploy) and with them off the
+        # network; what it gave them is withdrawn at once.
+        if not run.auto_deploy:
+            print(
+                "skip automatic deployment (it would reach every scanner here; see --auto-deploy)"
+            )
+        else:
+            set_setting(api, admin, "FIRMWARE_AUTO_DEPLOY", True)
+            fake.publish(release(v(10)), base_url=base_url)
+            fake.publish(release(v(11), min_plugin="99.0.0"), base_url=base_url)
+            st, result = api.call("POST", f"{P}/api/fleet/check/", token=admin)
+            check(
+                st == 200 and sorted(result["added"]) == sorted([v(10), v(11)]),
+                "with automatic deployment on, a check that fetches a release the plugin cannot drive still succeeds",
+                (st, result),
+            )
+            check(
+                (result.get("auto_deploy") or {}).get("version") == v(10),
+                "and deploys the newest one it can drive instead",
+                result.get("auto_deploy"),
+            )
+            d = deployments()[0]
+            check(
+                d["version"] == v(10)
+                and d["state"] == "pending"
+                and d["requested_by"] is None,
+                "to the scanner running something older, as an automatic deployment",
+                d,
+            )
+            st, overview = api.call("GET", f"{P}/api/fleet/", token=admin)
+            check(
+                overview["newest"] == v(10) and overview["last_check"]["added"],
+                "the fleet page offers the newest it can drive, and the check is recorded",
+                (overview["newest"], overview["last_check"]),
+            )
+            incompatible = next(
+                f for f in overview["firmware"] if f["version"] == v(11)
+            )
+            check(
+                incompatible["incompatible"]
+                and "99.0.0" in incompatible["incompatible"],
+                "the newer one is listed, marked incompatible",
+                incompatible,
+            )
+
+            fake.publish(release(v(12), proto=2), base_url=base_url)
+            st, result = api.call("POST", f"{P}/api/fleet/check/", token=admin)
+            check(
+                st == 200
+                and result["added"] == [v(12)]
+                and "auto_deploy" not in result,
+                "a check that fetches only a release it cannot drive deploys nothing",
+                (st, result),
+            )
+            api.call(
+                "POST", f"{P}/api/fleet/deployments/{d['id']}/cancel/", token=admin
+            )
+            st, everyone = api.call("GET", f"{P}/api/fleet/deployments/", token=admin)
+            stray = [
+                x for x in everyone if x["reader"] != READER and x["version"] == v(10)
+            ]
+            for x in stray:
+                api.call(
+                    "POST", f"{P}/api/fleet/deployments/{x['id']}/cancel/", token=admin
+                )
+            check(
+                all(x["state"] == "pending" for x in stray),
+                f"the automatic deployment it made to {len(stray)} other scanner(s) never got further than pending, and is withdrawn",
+                stray,
+            )
     finally:
         for k, val in saved.items():
             if val is not None:
@@ -834,21 +912,31 @@ def run(api, admin, scanner, loc):
     check(st == 204, "an admin can forget a scanner", st)
     st, overview = api.call("GET", f"{P}/api/fleet/", token=admin)
     for f in overview["firmware"]:
-        if f["version"].startswith(f"90.{stamp}.") or f["version"] == "1.0.0":
+        if f["version"].startswith((f"90.{stamp}.", f"89.{stamp}.")):
             api.call("DELETE", f"{P}/api/fleet/firmware/{f['id']}/", token=admin)
     st, overview = api.call("GET", f"{P}/api/fleet/", token=admin)
-    check(
-        not any(f["version"].startswith(f"90.{stamp}.") for f in overview["firmware"]),
-        "and remove releases",
-        len(overview["firmware"]),
-    )
+    # A release some other scanner's history refers to (an automatic deployment, withdrawn)
+    # keeps its record; its images go all the same.
+    left = [
+        f
+        for f in overview["firmware"]
+        if f["version"].startswith((f"90.{stamp}.", f"89.{stamp}.")) and f["available"]
+    ]
+    check(not left, "and remove releases", [f["version"] for f in left])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=f"http://127.0.0.1:{HTTP_PORT}")
     ap.add_argument("--host", default=f"inventree.localhost:{HTTP_PORT}")
+    ap.add_argument(
+        "--auto-deploy",
+        action="store_true",
+        help="also check automatic deployment, which reaches every scanner on this server: take "
+        "real ones off the network first (nfcprog.py net disable)",
+    )
     args = ap.parse_args()
+    run.auto_deploy = args.auto_deploy
     with open(os.path.join(HERE, "admin.token")) as f:
         admin = f.read().strip()
     api = Api(args.base, args.host)

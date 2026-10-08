@@ -161,9 +161,26 @@ def run_check() -> dict:
         )
     except Exception as exc:  # noqa: BLE001 - reported to the admin, not raised
         result = {"added": [], "errors": [str(exc)[:300]]}
-    result["pruned"] = fwlib.prune(int(fleet.setting("FIRMWARE_KEEP", 5)))
+    # What follows must not lose the check: whatever goes wrong is recorded with it.
+    try:
+        result["pruned"] = fwlib.prune(int(fleet.setting("FIRMWARE_KEEP", 5)))
+    except Exception as exc:  # noqa: BLE001 - reported to the admin, not raised
+        result["pruned"] = []
+        result["errors"].append(f"pruning: {exc}"[:300])
     if result["added"]:
-        fleet.auto_deploy(result["added"])
+        try:
+            deployed = fleet.auto_deploy(result["added"])
+        except Exception as exc:  # noqa: BLE001 - reported to the admin, not raised
+            deployed = None
+            result["errors"].append(f"deploying automatically: {exc}"[:300])
+        if deployed:
+            result["auto_deploy"] = deployed
+            if deployed.get("refused"):
+                result["errors"].append(
+                    f"{deployed['version']} not deployed automatically: {deployed['refused']}"[
+                        :300
+                    ]
+                )
     return fwlib.record_check(result)
 
 

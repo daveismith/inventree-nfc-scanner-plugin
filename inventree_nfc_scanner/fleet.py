@@ -291,30 +291,50 @@ def cancel(dep: Deployment) -> Deployment:
     return dep
 
 
-def auto_deploy(added: list[str]) -> None:
-    """With the setting on, a new stable release that is the newest held goes to every
-    scanner running something older."""
+def auto_deploy(added: list[str]) -> dict | None:
+    """With the setting on, a new stable release that is the newest this plugin can drive
+    goes to every scanner running something older. A courtesy: it never raises. Returns what
+    it did, for the check's record, or None when it had nothing to do.
+
+    A newer release this plugin cannot drive (another protocol, or one that needs a newer
+    plugin) is held and shown, but not deployed; the newest one it can drive is, if it is
+    among those just fetched."""
     if not setting("FIRMWARE_AUTO_DEPLOY", False):
-        return
+        return None
     stable = [v for v in added if "-" not in v]
     candidate = newest_firmware(include_prereleases=False)
     if candidate is None or candidate.version not in stable:
-        return
+        return None
     scanners = [
         s
         for s in Scanner.objects.all()
         if not s.fw or fwlib.newer(candidate.version, s.fw)
     ]
-    results = deploy(candidate, scanners)
+    try:
+        results = deploy(candidate, scanners)
+    except Refused as exc:
+        logger.warning(
+            "NFC scanner firmware %s not deployed automatically: %s",
+            candidate.version,
+            exc,
+        )
+        return {"version": candidate.version, "refused": str(exc)}
     logger.info(
         "NFC scanner firmware %s deployed automatically: %s", candidate.version, results
     )
+    return {"version": candidate.version, "results": results}
 
 
-def newest_firmware(include_prereleases: bool = True) -> Firmware | None:
+def newest_firmware(
+    include_prereleases: bool = True, compatible_only: bool = True
+) -> Firmware | None:
+    """The newest release held, by version: by default only among those this plugin can
+    deploy (its protocol, its plugin version, its image still on disk)."""
     qs = Firmware.objects.exclude(app="")
     if not include_prereleases:
         qs = qs.filter(prerelease=False)
+    if compatible_only:
+        qs = [fw for fw in qs if not fwlib.compatible(fw)]
     return fwlib.newest(qs)
 
 

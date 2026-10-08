@@ -41,7 +41,13 @@ progress shows beside it and in the history.
   settings it keeps, since it would forget them and drop off the network.
 - A second deployment to a scanner replaces one still pending.
 - *Deploy new releases automatically* sends each new stable release to every scanner running
-  something older, as soon as it is fetched. It is off by default.
+  something older (or a version it has not reported), as soon as it is fetched. It is off by
+  default. It only ever sends the newest release this plugin can drive: a newer one that needs
+  a newer plugin, or speaks another protocol, is fetched, listed and marked incompatible, but
+  not deployed; update the plugin to use it. Whatever happens, the check itself is recorded,
+  and a deployment refused is listed among its errors.
+- The fleet page's "newest" release, and the "available" badge on a scanner, are likewise the
+  newest this plugin can deploy.
 
 Only admins may see or do any of this: superusers, and users whose group has change permission
 on the *Admin* role.

@@ -85,14 +85,11 @@ in a realistic case; low = rough edge.
 - Fix: keep the previous password(s) as a protected setting and send `old_pwd`; warn in the
   settings description and README.
 
-### 8. The network update path has no server side
+### 8. The network update path has no server side (fixed by fleet updates)
 
-- Where: `core.py` has no firmware setting or endpoint; `sync.py` drops `ota` events (they carry
-  no `id`), so update progress is invisible on the server. The firmware accepts a network `ota`
-  only for an image on the plugin's own origin.
-- Fix: an endpoint that holds uploaded firmware and serves it to a scanner's token; a way to
-  queue an `ota` command (admin action or API) with the image's sha256; store `ota` events on the
-  machine's state.
+- Fixed: firmware is held and served (`firmware.py`, `fleet_views.py`), deployed by admins
+  (`fleet.py`), and `ota` answers and events move the scanner's deployment. See
+  `docs/fleet-updates.md`.
 
 ### 9. The dev instance is reachable from the LAN with documented credentials
 
@@ -161,6 +158,33 @@ in a realistic case; low = rough edge.
   automated coverage.
 - Fix: a minimal Django test suite (sync, cancel, stale marking, link) run in CI against
   SQLite, plus `makemigrations --check`.
+- Fleet updates added `dev/check_fleet.py` (also live-instance only). The deployment state
+  machine (`fleet.py`: `_settle`, `apply_ota_message`, `check_deployments`, `auto_deploy`) is
+  the first thing worth unit tests, since its timing cases (timeouts, retries, a restart mid
+  download) are slow to reach live.
+- Caveat for `makemigrations --check`: InvenTree's default id type differs from the one
+  migrations 0001 and 0003 use (`BigAutoField`), so `makemigrations` proposes altering the
+  existing ids. Set the ids explicitly on the models (or find where InvenTree's app config for
+  plugins takes `default_auto_field`) before adding the check.
+
+### 18. Whether a firmware release really works with its `min_plugin` is not tested
+
+- Where: the firmware's `tools/make_release.py` sets `MIN_PLUGIN` by hand; this plugin trusts
+  it (`firmware.compatible`) and the plugin's own `PROTO_VERSIONS`.
+- Scenario: a firmware change relies on plugin behaviour added in a later release and nobody
+  raises `MIN_PLUGIN`; older plugins are offered (and auto-deploy) a firmware they cannot drive.
+- Fix: the plan in the firmware repository's `docs/compat-testing-plan.md`: a contract test of
+  the firmware (its host simulator) against the plugin at `min_plugin`, in both repositories'
+  CI, gating the release.
+
+### 19. Automatic deployment cannot be checked in isolation on a live instance
+
+- Where: `dev/check_fleet.py --auto-deploy`. Automatic deployment goes to every scanner older
+  than the release, so on a server with real scanners the check gives them a deployment too;
+  it withdraws them at once and checks none got past pending, but a scanner calling in during
+  that second would be sent the stand-in release (which it refuses: not an image).
+- Fix: cover `auto_deploy` with unit tests (see 17) and drop the live variant, or limit
+  automatic deployment by a scanner group or machine setting.
 
 ## Noted, not planned
 

@@ -276,8 +276,12 @@ release than the one it runs is held. `incompatible` says why a release cannot b
 #### `POST api/fleet/check/`
 
 Look for new releases now (otherwise every *Check for firmware every* hours). Answers
-`{"added": ["0.2.1"], "errors": [], "pruned": [], "at": "…"}`. A release is taken only when
-each file's sha256 matches the manifest and GitHub's own digest of the asset.
+`{"added": ["0.2.1"], "errors": [], "pruned": [], "at": "…"}`, and with *Deploy new releases
+automatically* on, `"auto_deploy": {"version": "0.2.1", "results": [...]}` when it deployed
+one (the same results as `api/fleet/deploy/`). A release is taken only when each file's sha256
+matches the manifest and GitHub's own digest of the asset. The check is recorded whatever
+happens after the fetch; a failure there is listed in `errors`. `newest` in `GET api/fleet/`
+is the newest release this plugin can deploy.
 
 #### `POST api/fleet/upload/`
 

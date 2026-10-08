@@ -8,7 +8,8 @@
  * on any page once the module has loaded, which it has as soon as the dashboard or a
  * location page has been shown.
  *
- * It holds the port only while the tab is visible, and in one tab at a time.
+ * It holds the port in one tab at a time, and only while that tab is visible, except that a
+ * job in progress keeps it until the job ends.
  */
 import {
   grantedPort,
@@ -88,6 +89,7 @@ class ScannerService {
 
   private port: SerialPort | null = null;
   private closeWhenIdle = false;
+  private retryTimer = 0;
 
   /** The link closed: a job that was running has no scanner any more. */
   onClose(listener: () => void): () => void {
@@ -97,11 +99,20 @@ class ScannerService {
   private ensureLink(): ScannerLink {
     if (!this.link) {
       this.link = new ScannerLink();
-      this.link.onState = (link) =>
+      this.link.onState = (link) => {
         this.set({
           link,
           ...(link === 'closed' ? { info: null, onReader: null } : {})
         });
+        // Another tab has the port: it lets go when hidden, or when its job ends, with no
+        // word to us, so look again now and then.
+        window.clearInterval(this.retryTimer);
+        if (link === 'busy-elsewhere')
+          this.retryTimer = window.setInterval(() => {
+            if (this.state.link === 'busy-elsewhere')
+              this.reconnect().catch(() => {});
+          }, 5000);
+      };
       this.link.onMessage = (msg) => this.onMessage(msg);
     }
     return this.link;
@@ -119,6 +130,8 @@ class ScannerService {
       this.connecting
     )
       return;
+    if (this.link && this.link.state === 'busy-elsewhere')
+      this.link.state = 'closed'; // try afresh
     const port = await grantedPort();
     if (port) await this.connect(port);
   }

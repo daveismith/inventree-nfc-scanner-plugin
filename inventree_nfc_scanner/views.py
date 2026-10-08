@@ -19,9 +19,16 @@ from . import ndef
 from .machine import NETWORK_DRIVER, NfcScannerMachine, NfcScannerStatus
 from .models import Job, ScannerCommand
 from .serializers import JobCreateSerializer, JobSerializer, UsbJobSerializer
-from .sync import enqueue, handle_sync
+from .sync import enqueue, handle_sync, retire
 
 logger = logging.getLogger("inventree")
+
+
+def shared_cache() -> bool:
+    """Whether the cache is one every process sees (Redis), rather than per process."""
+    from django.conf import settings
+
+    return "LocMemCache" not in settings.CACHES.get("default", {}).get("BACKEND", "")
 
 
 def plugin():
@@ -109,6 +116,8 @@ class LinkView(APIView):
         from .barcodes import BadUid, NotPermitted, clean_uid, link_uid
 
         location = get_object_or_404(StockLocation, pk=pk)
+        if not isinstance(request.data, dict):
+            raise ValidationError({"uid": "expected an object with a uid"})
         try:
             uid = clean_uid(request.data.get("uid", ""))
             outcome = link_uid(location, uid, request.user)
@@ -119,7 +128,7 @@ class LinkView(APIView):
         except Exception:
             logger.exception(
                 "NFC: could not link %s to location %s for %s",
-                request.data.get("uid"),
+                request.data.get("uid") if isinstance(request.data, dict) else None,
                 pk,
                 request.user,
             )
@@ -235,11 +244,18 @@ class JobListView(APIView):
         location = get_object_or_404(StockLocation, pk=d["location"])
 
         machine = registry.get_machine(d["scanner"])
-        if not isinstance(machine, NfcScannerMachine) or not machine.active:
+        if (
+            not isinstance(machine, NfcScannerMachine)
+            or not machine.active
+            or not machine.initialized
+        ):
             raise ValidationError({"scanner": "No such scanner, or it is not active."})
         if machine.machine_config.driver != NETWORK_DRIVER:
             raise ValidationError({"scanner": "That scanner is not a network scanner."})
-        if machine.status == NfcScannerStatus.OFFLINE:
+        # Status lives in the cache. With the shared cache it is the truth from every
+        # process; with the per-process fallback each worker has its own idea of it, and a
+        # refusal here would be a lottery, so the gate is only applied when it can be right.
+        if shared_cache() and machine.status == NfcScannerStatus.OFFLINE:
             raise ValidationError({
                 "scanner": "That scanner is offline; a job for it would only wait."
             })
@@ -311,6 +327,8 @@ class JobCancelView(APIView):
                 job.state = Job.State.CANCELLED
                 job.finished_at = timezone.now()
                 job.save()
+                # Anything already sent is done with too, its secrets included.
+                retire(ScannerCommand.objects.filter(job=job, acked_at__isnull=True))
             elif not ScannerCommand.objects.filter(
                 job=job, acked_at__isnull=True, payload__cmd="cancel"
             ).exists():

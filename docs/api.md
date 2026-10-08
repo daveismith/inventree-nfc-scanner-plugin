@@ -86,7 +86,8 @@ The network scanners (InvenTree machines of type *NFC Scanner*), with their stat
   "online": true,
   "last_seen": "2026-10-06T02:11:51.311747+00:00",
   "last_tag": {"uid": "04AABBCCDDEEFF", "type": "ntag215", "text": "INV-SL1", "uri": null, "protected": true, "error": null, "at": "..."},
-  "location": null
+  "location": null,
+  "warning": null
 }]
 ```
 
@@ -104,7 +105,8 @@ Queue a job for a network scanner.
 ```
 
 `kind` is `program` (default) or `wipe`. Answers 201 with the job. 400 when the scanner is
-unknown, inactive, or not a network scanner.
+unknown, inactive or not initialised, not a network scanner, or (with the shared cache, where
+its status is known) offline.
 
 ### `GET api/jobs/?location=<pk>&scanner=<id>` and `GET api/jobs/<id>/`
 
@@ -132,9 +134,10 @@ offline already.
 
 ### `POST api/jobs/<id>/cancel/`
 
-A job the scanner has not collected is cancelled at once. One it has collected gets a
-`cancel` command, and ends `cancelled` when the scanner confirms. Answers with the job.
-Repeating it does not queue a second `cancel`.
+A job the scanner has not collected is cancelled at once, as is any job of a scanner that
+has been deactivated or deleted. One a live scanner has collected gets a `cancel` command,
+and ends `cancelled` when the scanner confirms. Answers with the job. Repeating it does not
+queue a second `cancel`.
 
 ## For a scanner
 
@@ -214,8 +217,10 @@ field's length, a `uid` that is not 14 hex digits is ignored, and so on. A negat
 (`ok: false`) ends a job only when it answers that job's `program` or `wipe`; a refused
 `cancel` does not, since the job's `done` follows. The
 password and PACK in a `program` or `wipe` command are removed from the plugin's record of
-the command once the scanner acknowledges it. Acknowledged commands and seen messages are
-deleted after two days.
+the command once the scanner acknowledges it, or the job ends. Acknowledged commands and seen
+messages are deleted after two days; the numbering is kept apart and only ever goes up. A
+`done` that arrives after the job was failed as `scanner_offline` is still applied: the tag
+was written, so the record and the barcode follow.
 
 The reference client is `tools/sync_bridge.py` in the firmware repository, which drives a
 USB scanner through this exchange.

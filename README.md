@@ -59,9 +59,10 @@ InvenTree in Docker, as on the Raspberry Pi:
    user, and the dashboard warns when two share one.
 
    The plugin keeps each scanner's status in InvenTree's cache, which must be the shared
-   one (Redis, as in InvenTree's own Docker setup) for the server and the background worker
-   to agree; with the per-process fallback cache the plugin logs a warning at start and
-   offline detection does not run.
+   one (Redis, as in InvenTree's own Docker setup): the server's workers and the background
+   worker each see their own copy otherwise, so the dashboard's status depends on which
+   worker answers, offline detection does not run, and the network route is unreliable.
+   With the per-process fallback the plugin logs a warning at start.
 
 `dev/setup.sh` does steps 3 and 4 through the API for the local instance; the same calls
 work against any server.

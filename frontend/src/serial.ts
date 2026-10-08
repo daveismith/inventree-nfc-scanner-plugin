@@ -3,8 +3,8 @@
  * in the firmware repository.
  *
  * One tab holds the port at a time (the browser allows one open handle), coordinated with
- * the Web Locks API, and only while the tab is visible, so that a background tab does not
- * keep the scanner's keyboard output switched off all day.
+ * the Web Locks API, and only while the tab is visible (a job in progress excepted), so that
+ * a background tab does not keep the scanner's keyboard output switched off all day.
  */
 
 // Minimal Web Serial typings, so the build needs no extra package.

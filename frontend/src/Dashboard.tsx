@@ -68,6 +68,10 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
             >
               in use by another tab: take over
             </Button>
+          ) : usb.link === 'opening' ? (
+            <Text size='sm' c='dimmed'>
+              connecting…
+            </Text>
           ) : (
             <Button
               size='compact-xs'

@@ -6,11 +6,8 @@ repos:
       - id: ruff-format
         args: [ --preview ]
       - id: ruff
-        args: [
-          --fix,
-          # --unsafe-fixes,
-          --preview
-        ]
+        # The same rule set as CI's `ruff check`; the formatter alone runs with --preview.
+        args: [ --fix ]
 -   repo: https://github.com/biomejs/pre-commit
     rev: v2.0.0
     hooks:

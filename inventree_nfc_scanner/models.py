@@ -133,3 +133,26 @@ class ScannerMessage(models.Model):
     boot = models.PositiveIntegerField()
     seq = models.PositiveIntegerField()
     received_at = models.DateTimeField(auto_now_add=True)
+
+
+class ScannerCounter(models.Model):
+    """The last command number given to a scanner. It only goes up, whatever becomes of the
+    command rows themselves (pruned, or deleted along with a job or a location), so a number
+    the scanner has already acknowledged is never given out again."""
+
+    class Meta:
+        """Meta options."""
+
+        app_label = "inventree_nfc_scanner"
+
+    machine = models.OneToOneField(
+        "machine.MachineConfig",
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="nfc_counter",
+    )
+    last_seq = models.PositiveIntegerField(default=0)
+
+    def __str__(self) -> str:
+        """Readable form."""
+        return f"{self.machine_id} at {self.last_seq}"

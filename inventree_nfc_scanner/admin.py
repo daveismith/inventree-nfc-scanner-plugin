@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import Job, ScannerCommand, ScannerMessage
+from .models import Job, ScannerCommand, ScannerCounter, ScannerMessage
 
 
 @admin.register(Job)
@@ -59,3 +59,11 @@ class ScannerMessageAdmin(admin.ModelAdmin):
 
     list_display = ("id", "machine", "boot", "seq", "received_at")
     list_filter = ("machine",)
+
+
+@admin.register(ScannerCounter)
+class ScannerCounterAdmin(admin.ModelAdmin):
+    """The command numbering per scanner; read only."""
+
+    list_display = ("machine", "last_seq")
+    readonly_fields = ("machine", "last_seq")

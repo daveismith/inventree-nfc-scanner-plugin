@@ -23,12 +23,11 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from machine.models import MachineConfig
 from rest_framework.exceptions import ValidationError
 
 from .barcodes import UID_RE
 from .machine import NfcScannerMachine, NfcScannerStatus
-from .models import Job, ScannerCommand, ScannerMessage
+from .models import Job, ScannerCommand, ScannerCounter, ScannerMessage
 
 logger = logging.getLogger("inventree")
 
@@ -73,18 +72,21 @@ def _seq(value) -> int | None:
 def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCommand:
     """Queue a command for a scanner, with the next sequence number."""
     with transaction.atomic():
-        # Two queues for the same scanner at once must not pick the same number.
-        MachineConfig.objects.select_for_update().get(pk=machine_config.pk)
-        last = (
+        # The counter row is the lock, so two queues for the same scanner at once take turns;
+        # it never goes down, whatever becomes of the command rows, so a number the scanner
+        # has acknowledged is never given out again.
+        counter, _ = ScannerCounter.objects.get_or_create(machine=machine_config)
+        counter = ScannerCounter.objects.select_for_update().get(pk=counter.pk)
+        highest_row = (
             ScannerCommand.objects.filter(machine=machine_config).aggregate(
                 m=Max("seq")
             )["m"]
             or 0
         )
-        # The newest command is never pruned (see mark_stale_scanners), so the numbering
-        # never goes back below what the scanner has acknowledged.
+        counter.last_seq = max(counter.last_seq, highest_row) + 1
+        counter.save(update_fields=["last_seq"])
         return ScannerCommand.objects.create(
-            machine=machine_config, seq=last + 1, job=job, payload=payload
+            machine=machine_config, seq=counter.last_seq, job=job, payload=payload
         )
 
 
@@ -106,7 +108,7 @@ def _finish(job: Job, state: str, **fields) -> None:
     # Its commands are done with. A scanner that restarts begins its acks again at zero, so
     # anything still marked unacknowledged would be sent again, and a finished `program`
     # must not be written twice.
-    _retire(ScannerCommand.objects.filter(job=job, acked_at__isnull=True))
+    retire(ScannerCommand.objects.filter(job=job, acked_at__isnull=True))
 
 
 def _link_barcode(job: Job) -> None:
@@ -169,8 +171,18 @@ def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
         })
         return
 
-    if job is None or job.finished:
+    if job is None:
         return
+    if job.finished:
+        # One case is worth hearing late: the scanner wrote the tag after a lapse long enough
+        # for the job to have been failed as scanner_offline. The tag is what it is now; the
+        # record and the barcode follow.
+        if not (
+            evt == "done"
+            and job.state == Job.State.FAILED
+            and job.error == "scanner_offline"
+        ):
+            return
 
     if evt == "waiting":
         job.state = Job.State.WAITING
@@ -206,7 +218,7 @@ def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
         machine.set_status(NfcScannerStatus.ONLINE)
 
 
-def _retire(commands) -> None:
+def retire(commands) -> None:
     """Commands that are done with: acknowledged, and the secrets they carried not kept. One
     deleted meanwhile (a cancel racing this) is simply gone."""
     now = timezone.now()
@@ -243,7 +255,7 @@ def handle_sync(
     )
 
     # 1. What the scanner has acted on is done with.
-    _retire(
+    retire(
         ScannerCommand.objects.filter(
             machine=config, acked_at__isnull=True, seq__lte=ack
         )
@@ -321,16 +333,9 @@ def mark_stale_scanners(offline_after_s: int) -> None:
     from .machine import NfcScannerMachine as MachineType
 
     # Bookkeeping that has served its purpose goes, so the tables do not grow for ever. The
-    # newest command of each scanner stays, whatever its age: the next number comes from it.
+    # numbering lives in ScannerCounter, so nothing here needs keeping for it.
     old = timezone.now() - KEEP_BOOKKEEPING_FOR
-    newest = (
-        ScannerCommand.objects.order_by("machine_id", "-seq")
-        .distinct("machine_id")
-        .values_list("pk", flat=True)
-    )
-    ScannerCommand.objects.filter(acked_at__lt=old).exclude(
-        pk__in=list(newest)
-    ).delete()
+    ScannerCommand.objects.filter(acked_at__lt=old).delete()
     ScannerMessage.objects.filter(received_at__lt=old).delete()
 
     # A scanner in a held call has not gone quiet: the threshold is never under the hold.
@@ -345,13 +350,18 @@ def mark_stale_scanners(offline_after_s: int) -> None:
     offline_after_s = max(offline_after_s, hold_s + 15)
 
     cutoff = timezone.now() - datetime.timedelta(seconds=offline_after_s)
-    for machine in registry.get_machines(active=True):
+    unfinished = [
+        Job.State.QUEUED,
+        Job.State.SENT,
+        Job.State.WAITING,
+        Job.State.WRITING,
+    ]
+    for machine in registry.get_machines(active=True, initialized=None):
         if not isinstance(machine, MachineType):
             continue
         seen = machine.last_seen
-        if machine.status in (NfcScannerStatus.ONLINE, NfcScannerStatus.BUSY) and (
-            seen is None or seen < cutoff
-        ):
+        quiet = seen is None or seen < cutoff
+        if machine.status in (NfcScannerStatus.ONLINE, NfcScannerStatus.BUSY) and quiet:
             machine.set_status(NfcScannerStatus.OFFLINE)
             machine.set_status_text(
                 str(
@@ -359,14 +369,16 @@ def mark_stale_scanners(offline_after_s: int) -> None:
                     + (seen.strftime("%Y-%m-%d %H:%M:%S UTC") if seen else "start")
                 )
             )
-            # A job the scanner will not finish, and one it will not even collect
+        if (
+            machine.status not in (NfcScannerStatus.ONLINE, NfcScannerStatus.BUSY)
+            and quiet
+        ):
+            # A job the scanner will not finish, and one it will not even collect: for a
+            # scanner just marked offline, and for one that was never heard from (unknown,
+            # or not initialised) and has had its chance.
             for job in Job.objects.filter(
                 machine=machine.machine_config,
-                state__in=[
-                    Job.State.QUEUED,
-                    Job.State.SENT,
-                    Job.State.WAITING,
-                    Job.State.WRITING,
-                ],
+                state__in=unfinished,
+                created_at__lt=cutoff,
             ):
                 _finish(job, Job.State.FAILED, error="scanner_offline")

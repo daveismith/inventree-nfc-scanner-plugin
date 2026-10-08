@@ -342,6 +342,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
           scanner: scannerId,
           overwrite
         });
+        netJobId.current = job.id;
         setNetJob(job);
         setProgress({ stage: 'queued', text: describe(job) });
       } catch (e: any) {
@@ -355,9 +356,13 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
     [api, location, scannerId]
   );
 
+  // The network job being followed, by id, for answers that arrive after it changed.
+  const netJobId = useRef<number | null>(null);
+
   /** A network job as the server now reports it: shown, and ended when it has ended. */
   const applyJob = useCallback(
     (job: Job) => {
+      if (netJobId.current !== null && job.id !== netJobId.current) return; // a stale poll
       setNetJob(job);
       const stage: Stage =
         job.state === 'done'
@@ -408,6 +413,10 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
 
   const start = (overwrite: boolean, route: 'usb' | 'net') => {
     lastRoute.current = route;
+    if (route === 'usb' && !scanner.isOpen) {
+      setProgress({ stage: 'failed', text: 'the scanner is not connected' });
+      return Promise.resolve();
+    }
     return route === 'usb' ? programUsb(overwrite) : programNet(overwrite);
   };
 

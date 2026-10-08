@@ -212,6 +212,10 @@ def run(api, admin, scanner, machine, loc):
     check(st == 400, "a malformed sync body: 400", (st, body))
     st, body = sync({"msgs": "nope"})
     check(st == 400, "msgs that is not a list: 400", (st, body))
+    st, body = sync({"proto": "1"})
+    check(st == 400, "a protocol version that is not the number 1: 400", (st, body))
+    st, body = sync({"boot": 7.0, "ack": 0.0})
+    check(st == 200, "whole numbers written as floats are accepted", (st, body))
     st, body = api.call(
         "GET", f"{P}/api/location/{loc}/tag/", basic=f"{ADMIN_USER}:{ADMIN_PASSWORD}"
     )
@@ -433,8 +437,21 @@ def run(api, admin, scanner, machine, loc):
         "a collected job is cancelled by a cancel command",
         body,
     )
+    cancel_seq = body["cmds"][0]["seq"]
     sync({
-        "ack": body["cmds"][0]["seq"],
+        "ack": cancel_seq,
+        "msgs": [
+            {"seq": 7, "rsp": "cancel", "ok": False, "id": job["id"], "error": "busy"}
+        ],
+    })
+    st, j = api.call("GET", f"{P}/api/jobs/{job['id']}/", token=admin)
+    check(
+        j["state"] not in ("done", "failed", "cancelled"),
+        "a refused cancel (too late) does not end the job",
+        j["state"],
+    )
+    sync({
+        "ack": cancel_seq,
         "msgs": [{"seq": 8, "evt": "failed", "id": job["id"], "error": "cancelled"}],
     })
     st, j = api.call("GET", f"{P}/api/jobs/{job['id']}/", token=admin)
@@ -514,6 +531,17 @@ def run(api, admin, scanner, machine, loc):
         body={"uid": "not hex"},
     )
     check(st == 400, "a UID that is not hex is refused", (st, body))
+    st, body = api.call(
+        "POST",
+        f"{P}/api/location/{loc2['pk']}/link/",
+        token=admin,
+        body={"uid": "4006381333931"},
+    )
+    check(st == 400, "a 13-digit product barcode is not a UID", (st, body))
+    st, body = api.call(
+        "POST", f"{P}/api/location/{loc2['pk']}/link/", token=admin, body=[]
+    )
+    check(st == 400, "a body that is not an object: 400", (st, body))
     st, location = api.call("GET", f"/api/stock/location/{loc}/", token=admin)
     check(
         not location.get("barcode_hash"),

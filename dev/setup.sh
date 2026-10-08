@@ -13,7 +13,7 @@ INVENTREE_ADMIN_USER="$(env_value INVENTREE_ADMIN_USER)"
 INVENTREE_ADMIN_PASSWORD="$(env_value INVENTREE_ADMIN_PASSWORD)"
 [ -n "$INVENTREE_SITE_URL" ] && [ -n "$INVENTREE_ADMIN_USER" ] || { echo "dev/.env is missing or incomplete; see README.md"; exit 1; }
 BASE="http://127.0.0.1:${INVENTREE_HTTP_PORT:-8080}"
-HOST="Host: ${INVENTREE_SITE_URL#http://}"
+HOST="Host: ${INVENTREE_SITE_URL#*://}"
 AUTH="$INVENTREE_ADMIN_USER:$INVENTREE_ADMIN_PASSWORD"
 
 say() { printf '%s\n' "$*"; }

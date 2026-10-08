@@ -19,7 +19,9 @@ from InvenTree.models import InvenTreeBarcodeMixin
 
 logger = logging.getLogger("inventree")
 
-UID_RE = re.compile(r"^[0-9A-F]{8,20}$")
+# An NTAG21x UID: 7 bytes. Exactly 14 hex digits, so that nothing that looks like a product
+# barcode (an EAN is 13 decimal digits) can ever be passed off as one.
+UID_RE = re.compile(r"^[0-9A-F]{14}$")
 
 
 class BadUid(ValueError):
@@ -34,7 +36,7 @@ def clean_uid(value) -> str:
     """The UID as upper-case hex, or raise BadUid."""
     uid = str(value or "").strip().upper()
     if not UID_RE.match(uid):
-        raise BadUid("the tag UID, as 8 to 20 hex digits")
+        raise BadUid("the tag UID, as 14 hex digits")
     return uid
 
 
@@ -58,6 +60,8 @@ def link_uid(location, uid, actor) -> str:
     by the actor, and whatever InvenTree raises when the link itself fails. All or nothing.
     """
     uid = clean_uid(uid)
+    if actor is None or not getattr(actor, "is_active", False):
+        raise NotPermitted("no active user to link on behalf of")
     barcode_hash = hash_barcode(uid)
     if location.barcode_hash == barcode_hash:
         return "already linked"
@@ -68,8 +72,9 @@ def link_uid(location, uid, actor) -> str:
             if other == location:
                 continue
             if not _may_change(actor, other):
+                # Named by kind only: what it is called is not this user's to see.
                 raise NotPermitted(
-                    f"the tag is the barcode of {other._meta.verbose_name} {other}, which you may not change"
+                    f"the tag is already the barcode of a {other._meta.verbose_name}, which you may not change"
                 )
             moved_from.append(f"{other._meta.verbose_name} {other}")
             other.unassign_barcode()

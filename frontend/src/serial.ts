@@ -89,6 +89,7 @@ export class ScannerLink {
   private opening: Promise<boolean> | null = null;
 
   async open(port: SerialPort, steal = false): Promise<boolean> {
+    if (this.closing) await this.closing; // let a close finish: it still holds the lock
     if (this.port) return true;
     if (this.opening) return this.opening; // a second caller joins the first
     this.opening = this.doOpen(port, steal).finally(() => {
@@ -153,6 +154,7 @@ export class ScannerLink {
 
   async close(): Promise<void> {
     if (this.closing) return this.closing;
+    if (!this.port && !this.opening) return; // nothing is open: nothing to tell anyone
     this.closing = this.doClose().finally(() => {
       this.closing = null;
     });

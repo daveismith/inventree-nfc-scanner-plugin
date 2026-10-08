@@ -98,7 +98,14 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
           <Table.Tbody>
             {scanners.map((s) => (
               <Table.Tr key={s.id}>
-                <Table.Td>{s.name}</Table.Td>
+                <Table.Td>
+                  {s.name}
+                  {s.warning && (
+                    <Text c='orange' size='xs'>
+                      {s.warning}
+                    </Text>
+                  )}
+                </Table.Td>
                 <Table.Td>
                   <Badge color={s.online ? 'green' : 'red'} variant='light'>
                     {s.status}

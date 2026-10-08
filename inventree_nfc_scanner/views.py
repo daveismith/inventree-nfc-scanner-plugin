@@ -116,13 +116,12 @@ class LinkView(APIView):
             raise ValidationError({"uid": str(exc)})
         except NotPermitted as exc:
             raise PermissionDenied(str(exc))
-        except Exception as exc:  # noqa: BLE001 - InvenTree's own refusal (a ValidationError), or a fault, which is logged
-            logger.warning(
-                "NFC: could not link %s to location %s for %s: %s",
+        except Exception:
+            logger.exception(
+                "NFC: could not link %s to location %s for %s",
                 request.data.get("uid"),
                 pk,
                 request.user,
-                exc,
             )
             raise ValidationError({
                 "uid": "the barcode could not be linked; the server log has the reason"
@@ -205,7 +204,11 @@ class ScannerListView(APIView):
 class JobListView(APIView):
     """GET api/jobs/ : recent jobs. POST api/jobs/ : a job for a network scanner."""
 
-    permission_classes = [CanProgramTags]
+    def get_permissions(self):
+        """Reading needs view permission; queuing a job needs change permission."""
+        return (
+            [CanSeeScanners()] if self.request.method == "GET" else [CanProgramTags()]
+        )
 
     def get(self, request, *args, **kwargs):
         """Recent jobs, newest first; `location` and `scanner` filter."""
@@ -236,6 +239,10 @@ class JobListView(APIView):
             raise ValidationError({"scanner": "No such scanner, or it is not active."})
         if machine.machine_config.driver != NETWORK_DRIVER:
             raise ValidationError({"scanner": "That scanner is not a network scanner."})
+        if machine.status == NfcScannerStatus.OFFLINE:
+            raise ValidationError({
+                "scanner": "That scanner is offline; a job for it would only wait."
+            })
 
         kind = d.get("kind", Job.Kind.PROGRAM)
         timeout_s = int(plugin().get_setting("JOB_TIMEOUT_S") or 60)
@@ -290,15 +297,16 @@ class JobCancelView(APIView):
     def post(self, request, pk, *args, **kwargs):
         """Cancel it: at once if the scanner has not collected it, else by asking the scanner."""
         with transaction.atomic():
+            # The job row first, then its commands: the same order as the sync handing them
+            # out, so the two cannot wait on each other.
             job = get_object_or_404(Job.objects.select_for_update(), pk=pk)
             if job.finished:
                 return Response(JobSerializer(job).data)
             unsent = ScannerCommand.objects.select_for_update().filter(
                 job=job, acked_at__isnull=True, sent_at__isnull=True
             )
-            if job.machine is None or (
-                job.state == Job.State.QUEUED and unsent.exists()
-            ):
+            machine_gone = job.machine is None or not job.machine.active
+            if machine_gone or (job.state == Job.State.QUEUED and unsent.exists()):
                 unsent.delete()
                 job.state = Job.State.CANCELLED
                 job.finished_at = timezone.now()
@@ -321,7 +329,7 @@ class SyncView(APIView):
         reader_id = str(body.get("reader", "")).strip()
         if not reader_id:
             raise ValidationError({"reader": "required"})
-        if int(body.get("proto", 0) or 0) != 1:
+        if body.get("proto") != 1:
             raise ValidationError({"proto": "this plugin speaks protocol version 1"})
 
         driver = registry.get_driver_instance(NETWORK_DRIVER)

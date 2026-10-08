@@ -47,6 +47,11 @@ and the compose file mounts this repository there. At every start InvenTree runs
   For live reloading instead, see "Frontend development" in the main README.
 - **A new migration** is applied at the restart too.
 
+`dev/check.py` plays the scanner itself, with the reader id of the machine `setup.sh`
+creates. A real scanner configured for the same instance would collect the checks'
+commands first and make them fail, so take it off the air for the run
+(`nfcprog.py net disable`, then `net enable`).
+
 ## Try the API
 
 `setup.sh` leaves an admin API token in `dev/admin.token`. For example:

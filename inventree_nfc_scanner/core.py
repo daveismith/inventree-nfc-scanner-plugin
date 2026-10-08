@@ -81,8 +81,10 @@ class InvenTreeNFCScanner(
         },
         "JOB_TIMEOUT_S": {
             "name": _("Job timeout (seconds)"),
-            "description": _("How long a scanner waits for a tag to be presented"),
-            "validator": int,
+            "description": _(
+                "How long a scanner waits for a tag to be presented (1 to 600)"
+            ),
+            "validator": [int, MinValueValidator(1), MaxValueValidator(600)],
             "default": 60,
         },
         "LONG_POLL": {
@@ -104,8 +106,10 @@ class InvenTreeNFCScanner(
         },
         "SCANNER_OFFLINE_S": {
             "name": _("Offline after (seconds)"),
-            "description": _("A scanner not heard from for this long is shown offline"),
-            "validator": int,
+            "description": _(
+                "A scanner not heard from for this long is shown offline (10 to 3600; never less than the longest hold)"
+            ),
+            "validator": [int, MinValueValidator(10), MaxValueValidator(3600)],
             "default": 40,
         },
     }
@@ -113,6 +117,22 @@ class InvenTreeNFCScanner(
     SCHEDULED_TASKS = {
         "check_scanners": {"func": "check_scanners", "schedule": "I", "minutes": 1},
     }
+
+    def __init__(self):
+        """Say so once when the machine state cannot be shared between processes."""
+        super().__init__()
+        from django.conf import settings
+
+        backend = settings.CACHES.get("default", {}).get("BACKEND", "")
+        if "LocMemCache" in backend:
+            import logging
+
+            logging.getLogger("inventree").warning(
+                "NFC scanner plugin: the cache is per process (%s). Scanner status is kept there, so the "
+                "server and the worker will not agree and offline detection will not run. Configure "
+                "InvenTree's global cache (Redis) for this plugin.",
+                backend,
+            )
 
     def check_scanners(self):
         """Mark scanners that have gone quiet as offline (runs every minute)."""

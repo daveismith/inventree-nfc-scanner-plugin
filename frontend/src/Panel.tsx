@@ -200,13 +200,18 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
             ? 'cancelled'
             : 'failed',
         overwrite,
-        uid: final.uid ?? '',
-        tag_type: final.type ?? '',
-        protected: final.protected ?? null,
-        error: linkFailure ? 'link_failed' : (final.error ?? ''),
-        error_detail: linkFailure
-          ? `tag written; barcode link failed: ${linkFailure}`.slice(0, 200)
-          : (final.detail ?? '')
+        uid: String(final.uid ?? '').slice(0, 20),
+        tag_type: String(final.type ?? '').slice(0, 12),
+        protected:
+          typeof final.protected === 'boolean' ? final.protected : null,
+        error: (linkFailure ? 'link_failed' : String(final.error ?? '')).slice(
+          0,
+          32
+        ),
+        error_detail: (linkFailure
+          ? `tag written; barcode link failed: ${linkFailure}`
+          : String(final.detail ?? '')
+        ).slice(0, 200)
       })
         .then(refreshHistory)
         .catch(() => {});
@@ -290,6 +295,7 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
           tag.timeout_s * 1000 + 5000
         );
       });
+      final.catch(() => {}); // awaited below; never an unhandled rejection meanwhile
       try {
         const rsp = await scanner.request(cmd);
         if (!rsp.ok) {
@@ -304,7 +310,12 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
         await finishUsb(await final, overwrite);
       } catch (e: any) {
         setProgress({ stage: 'failed', text: e.message });
-        recordAttempt(overwrite, 'no_scanner', e.message);
+        const disconnected = !scanner.isOpen || /disconnected/.test(e.message);
+        recordAttempt(
+          overwrite,
+          disconnected ? 'no_scanner' : 'no_answer',
+          e.message
+        );
       } finally {
         window.clearTimeout(timer);
         unsubscribe();
@@ -344,30 +355,36 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
     [api, location, scannerId]
   );
 
+  /** A network job as the server now reports it: shown, and ended when it has ended. */
+  const applyJob = useCallback(
+    (job: Job) => {
+      setNetJob(job);
+      const stage: Stage =
+        job.state === 'done'
+          ? 'done'
+          : job.state === 'failed' || job.state === 'cancelled'
+            ? 'failed'
+            : job.state === 'queued' || job.state === 'sent'
+              ? 'queued'
+              : job.state;
+      setProgress({
+        stage,
+        text: describe(job),
+        uid: job.uid,
+        error: job.error,
+        existing: job.existing_text
+      });
+      if (['done', 'failed', 'cancelled'].includes(job.state)) refreshHistory();
+    },
+    [refreshHistory]
+  );
+
   useEffect(() => {
     if (!netJob || ['done', 'failed', 'cancelled'].includes(netJob.state))
       return;
     const timer = window.setInterval(async () => {
       try {
-        const job = await getJob(api, netJob.id);
-        setNetJob(job);
-        const stage: Stage =
-          job.state === 'done'
-            ? 'done'
-            : job.state === 'failed' || job.state === 'cancelled'
-              ? 'failed'
-              : job.state === 'queued' || job.state === 'sent'
-                ? 'queued'
-                : job.state;
-        setProgress({
-          stage,
-          text: describe(job),
-          uid: job.uid,
-          error: job.error,
-          existing: job.existing_text
-        });
-        if (['done', 'failed', 'cancelled'].includes(job.state))
-          refreshHistory();
+        applyJob(await getJob(api, netJob.id));
       } catch {
         /* keep polling */
       }
@@ -376,11 +393,12 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
   }, [api, netJob, refreshHistory]);
 
   const cancelNet = useCallback(() => {
+    // A job cancelled at once comes back already ended; applyJob settles the panel for it.
     if (netJob)
       cancelJob(api, netJob.id)
-        .then(setNetJob)
+        .then(applyJob)
         .catch(() => {});
-  }, [api, netJob]);
+  }, [api, netJob, applyJob]);
 
   // --- rendering
 
@@ -453,11 +471,14 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
                 Program tag
               </Button>
             )}
-            {usbReady && busy && lastRoute.current === 'usb' && (
-              <Button variant='subtle' color='red' onClick={cancelUsb}>
-                Cancel
-              </Button>
-            )}
+            {usbReady &&
+              lastRoute.current === 'usb' &&
+              (progress.stage === 'waiting' ||
+                progress.stage === 'writing') && (
+                <Button variant='subtle' color='red' onClick={cancelUsb}>
+                  Cancel
+                </Button>
+              )}
           </Group>
         )}
         {usbReady && usb.onReader && (
@@ -574,6 +595,12 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
                     {job.state}
                   </Badge>{' '}
                   {job.uid || job.error}
+                  {job.error_detail && (
+                    <Text c='dimmed' size='xs' component='span'>
+                      {' '}
+                      {job.error_detail}
+                    </Text>
+                  )}
                 </Table.Td>
               </Table.Tr>
             ))}

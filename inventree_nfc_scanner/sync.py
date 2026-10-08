@@ -62,13 +62,12 @@ def _flag(value):
 
 
 def _seq(value) -> int | None:
-    return (
-        value
-        if isinstance(value, int)
-        and not isinstance(value, bool)
-        and 0 <= value <= SEQ_MAX
-        else None
-    )
+    """A whole number from 0 to 2^31-1: a JSON int, or a float with nothing after the point."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value if isinstance(value, int) and 0 <= value <= SEQ_MAX else None
 
 
 def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCommand:
@@ -82,6 +81,8 @@ def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCom
             )["m"]
             or 0
         )
+        # The newest command is never pruned (see mark_stale_scanners), so the numbering
+        # never goes back below what the scanner has acknowledged.
         return ScannerCommand.objects.create(
             machine=machine_config, seq=last + 1, job=job, payload=payload
         )
@@ -106,9 +107,7 @@ def _finish(job: Job, state: str, **fields) -> None:
     # Its commands are done with. A scanner that restarts begins its acks again at zero, so
     # anything still marked unacknowledged would be sent again, and a finished `program`
     # must not be written twice.
-    ScannerCommand.objects.filter(job=job, acked_at__isnull=True).update(
-        acked_at=job.finished_at
-    )
+    _retire(ScannerCommand.objects.filter(job=job, acked_at__isnull=True))
 
 
 def _link_barcode(job: Job) -> None:
@@ -142,8 +141,14 @@ def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
         job = Job.objects.filter(pk=job_id, machine=machine.machine_config).first()
 
     if "rsp" in msg:
-        # The answer to a command. Only a refused job matters here.
-        if job and msg.get("ok") is not True and not job.finished:
+        # The answer to a command. Only a refused `program` or `wipe` ends its job; a refused
+        # `cancel` (too late: the tag is being written) must not, since `done` follows.
+        if (
+            job
+            and msg.get("rsp") in ("program", "wipe")
+            and msg.get("ok") is not True
+            and not job.finished
+        ):
             _finish(
                 job,
                 Job.State.FAILED,
@@ -203,15 +208,14 @@ def apply_message(machine: NfcScannerMachine, msg: dict) -> None:
 
 
 def _retire(commands) -> None:
-    """Acknowledged commands are done with; the secrets they carried are not kept."""
+    """Commands that are done with: acknowledged, and the secrets they carried not kept. One
+    deleted meanwhile (a cancel racing this) is simply gone."""
     now = timezone.now()
-    for command in commands:
-        if any(k in command.payload for k in SECRET_FIELDS):
-            command.payload = {
-                k: v for k, v in command.payload.items() if k not in SECRET_FIELDS
-            }
-        command.acked_at = now
-        command.save(update_fields=["payload", "acked_at"])
+    for command in list(commands):
+        payload = {k: v for k, v in command.payload.items() if k not in SECRET_FIELDS}
+        ScannerCommand.objects.filter(pk=command.pk).update(
+            payload=payload, acked_at=now
+        )
 
 
 def handle_sync(
@@ -276,13 +280,28 @@ def handle_sync(
     # or the other, never a command it deleted being handed out.
     sent_at = timezone.now()
     with transaction.atomic():
-        fresh = list(
-            ScannerCommand.objects
-            .select_for_update()
-            .filter(pk__in=[c.pk for c in commands])
-            .order_by("seq")
+        # The job rows first, then the commands: the same order as a cancel, so the two
+        # cannot wait on each other. A command retired or cancelled meanwhile is left out.
+        list(
+            Job.objects.select_for_update().filter(
+                pk__in=[c.job_id for c in commands if c.job_id]
+            )
         )
-        commands = fresh
+        # No join under the lock: Postgres cannot lock the nullable side of one.
+        ended = set(
+            Job.objects.filter(
+                pk__in=[c.job_id for c in commands if c.job_id],
+                state__in=[Job.State.DONE, Job.State.FAILED, Job.State.CANCELLED],
+            ).values_list("pk", flat=True)
+        )
+        commands = [
+            c
+            for c in ScannerCommand.objects
+            .select_for_update()
+            .filter(pk__in=[c.pk for c in commands], acked_at__isnull=True)
+            .order_by("seq")
+            if c.job_id not in ended
+        ]
         for command in commands:
             if command.sent_at is None:
                 command.sent_at = sent_at
@@ -303,10 +322,30 @@ def mark_stale_scanners(offline_after_s: int) -> None:
 
     from .machine import NfcScannerMachine as MachineType
 
-    # Bookkeeping that has served its purpose goes, so the tables do not grow for ever.
+    # Bookkeeping that has served its purpose goes, so the tables do not grow for ever. The
+    # newest command of each scanner stays, whatever its age: the next number comes from it.
     old = timezone.now() - KEEP_BOOKKEEPING_FOR
-    ScannerCommand.objects.filter(acked_at__lt=old).delete()
+    newest = (
+        ScannerCommand.objects
+        .order_by("machine_id", "-seq")
+        .distinct("machine_id")
+        .values_list("pk", flat=True)
+    )
+    ScannerCommand.objects.filter(acked_at__lt=old).exclude(
+        pk__in=list(newest)
+    ).delete()
     ScannerMessage.objects.filter(received_at__lt=old).delete()
+
+    # A scanner in a held call has not gone quiet: the threshold is never under the hold.
+    from plugin import registry as plugin_registry
+
+    plg = plugin_registry.get_plugin("nfcscanner")
+    hold_s = (
+        int(plg.get_setting("LONG_POLL_MAX_S") or 0)
+        if plg and plg.get_setting("LONG_POLL")
+        else 0
+    )
+    offline_after_s = max(offline_after_s, hold_s + 15)
 
     cutoff = timezone.now() - datetime.timedelta(seconds=offline_after_s)
     for machine in registry.get_machines(active=True):
@@ -323,9 +362,14 @@ def mark_stale_scanners(offline_after_s: int) -> None:
                     + (seen.strftime("%Y-%m-%d %H:%M:%S UTC") if seen else "start")
                 )
             )
-            # A job the scanner will not finish
+            # A job the scanner will not finish, and one it will not even collect
             for job in Job.objects.filter(
                 machine=machine.machine_config,
-                state__in=[Job.State.SENT, Job.State.WAITING, Job.State.WRITING],
+                state__in=[
+                    Job.State.QUEUED,
+                    Job.State.SENT,
+                    Job.State.WAITING,
+                    Job.State.WRITING,
+                ],
             ):
                 _finish(job, Job.State.FAILED, error="scanner_offline")

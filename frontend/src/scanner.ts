@@ -67,8 +67,14 @@ class ScannerService {
     if (this.started || !hasWebSerial()) return;
     this.started = true;
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden') this.link?.close();
-      else this.reconnect().catch(() => {});
+      if (document.visibilityState === 'hidden') {
+        // A job in progress keeps the port: it ends by itself, and the close follows then.
+        if (this.state.jobActive) this.closeWhenIdle = true;
+        else this.link?.close();
+      } else {
+        this.closeWhenIdle = false;
+        this.reconnect().catch(() => {});
+      }
     });
     // Plugged in or out: only the scanner matters, not any other serial device.
     navigator.serial?.addEventListener('disconnect', (e) => {
@@ -81,6 +87,7 @@ class ScannerService {
   }
 
   private port: SerialPort | null = null;
+  private closeWhenIdle = false;
 
   /** The link closed: a job that was running has no scanner any more. */
   onClose(listener: () => void): () => void {
@@ -136,7 +143,13 @@ class ScannerService {
       if (!opened) return;
       this.port = port;
       await link.request({ cmd: 'hid', enabled: false }).catch(() => {});
-      const info = await link.request({ cmd: 'info' });
+      let info: ScannerMessage;
+      try {
+        info = await link.request({ cmd: 'info' });
+      } catch (e) {
+        await link.close(); // a port that does not answer is not a scanner we can use
+        throw e;
+      }
       this.set({ info, onReader: info.tag ? { uid: info.tag } : null });
     } finally {
       this.connecting = false;
@@ -171,6 +184,10 @@ class ScannerService {
   /** A panel running a job: taps are reported to it rather than acted on here. */
   setJobActive(active: boolean) {
     this.set({ jobActive: active });
+    if (!active && this.closeWhenIdle) {
+      this.closeWhenIdle = false;
+      if (document.visibilityState === 'hidden') this.link?.close();
+    }
   }
 
   /** Everything the scanner says, for a panel following a job. */

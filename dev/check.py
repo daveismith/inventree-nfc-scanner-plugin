@@ -28,13 +28,16 @@ def env_value(name, default=""):
         with open(os.path.join(HERE, ".env")) as f:
             for line in f:
                 if line.startswith(name + "="):
-                    return line.split("=", 1)[1].strip()
+                    return line.split("=", 1)[1].strip().strip("\"'")
     except FileNotFoundError:
         pass
     return default
 
 
+ADMIN_USER = env_value("INVENTREE_ADMIN_USER", "admin")
 ADMIN_PASSWORD = env_value("INVENTREE_ADMIN_PASSWORD", "admin-nfc-dev")
+SITE_URL = env_value("INVENTREE_SITE_URL", "http://inventree.localhost:8080")
+HTTP_PORT = env_value("INVENTREE_HTTP_PORT", "8080")
 SCANNER_USER, SCANNER_PASSWORD = "scanner-desk", "scanner-nfc-dev"
 
 fails = 0
@@ -210,7 +213,7 @@ def run(api, admin, scanner, machine, loc):
     st, body = sync({"msgs": "nope"})
     check(st == 400, "msgs that is not a list: 400", (st, body))
     st, body = api.call(
-        "GET", f"{P}/api/location/{loc}/tag/", basic=f"admin:{ADMIN_PASSWORD}"
+        "GET", f"{P}/api/location/{loc}/tag/", basic=f"{ADMIN_USER}:{ADMIN_PASSWORD}"
     )
     check(
         st == 401,
@@ -626,8 +629,8 @@ def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--base", default="http://127.0.0.1:8080")
-    ap.add_argument("--host", default="inventree.localhost:8080")
+    ap.add_argument("--base", default=f"http://127.0.0.1:{HTTP_PORT}")
+    ap.add_argument("--host", default=SITE_URL.split("://", 1)[-1])
     args = ap.parse_args()
     try:
         with open(os.path.join(HERE, "admin.token")) as f:

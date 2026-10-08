@@ -5,7 +5,13 @@
 set -e
 cd "$(dirname "$0")"
 
-. ./.env
+# .env is compose's, not the shell's: values with spaces, $ or # would break `. ./.env`.
+env_value() { grep "^$1=" .env | head -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"; }
+INVENTREE_HTTP_PORT="$(env_value INVENTREE_HTTP_PORT)"
+INVENTREE_SITE_URL="$(env_value INVENTREE_SITE_URL)"
+INVENTREE_ADMIN_USER="$(env_value INVENTREE_ADMIN_USER)"
+INVENTREE_ADMIN_PASSWORD="$(env_value INVENTREE_ADMIN_PASSWORD)"
+[ -n "$INVENTREE_SITE_URL" ] && [ -n "$INVENTREE_ADMIN_USER" ] || { echo "dev/.env is missing or incomplete; see README.md"; exit 1; }
 BASE="http://127.0.0.1:${INVENTREE_HTTP_PORT:-8080}"
 HOST="Host: ${INVENTREE_SITE_URL#http://}"
 AUTH="$INVENTREE_ADMIN_USER:$INVENTREE_ADMIN_PASSWORD"
@@ -36,8 +42,10 @@ done
 api -X PATCH "$BASE/api/settings/global/INVENTREE_BASE_URL/" -d "{\"value\":\"$INVENTREE_SITE_URL\"}" || fail "could not set the base URL"
 
 say "an admin API token, in admin.token"
-curl -sf -u "$AUTH" -H "$HOST" "$BASE/api/user/token/?name=nfc-dev-admin" \
-    | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])' > admin.token || fail "could not get a token"
+token="$(curl -sf -u "$AUTH" -H "$HOST" "$BASE/api/user/token/?name=nfc-dev-admin" \
+    | python3 -c 'import sys, json; print(json.load(sys.stdin)["token"])')" || fail "could not get a token"
+[ -n "$token" ] || fail "could not get a token"
+printf '%s\n' "$token" > admin.token
 
 say "collecting static files (the web UI's own, and the plugins')"
 docker compose exec -T inventree-server invoke static > /dev/null || fail "invoke static failed"

@@ -50,7 +50,8 @@ barcode for the location. 400 with `{"base_url": "..."}` when the base URL is no
 
 ### `POST api/location/<pk>/link/`
 
-Make a tag's UID the location's barcode: `{"uid": "04A1B2C3D4E5F6"}` (8 to 20 hex digits).
+Make a tag's UID the location's barcode: `{"uid": "04A1B2C3D4E5F6"}` (an NTAG21x UID: exactly
+14 hex digits, so that no product barcode can be passed off as one).
 Unlike InvenTree's own `/api/barcode/link/`, which refuses a barcode something already
 carries, this takes it from whatever held it before, which is what re-programming a tag for
 another bin means. The user must have change permission on each such holder's model (a
@@ -125,7 +126,9 @@ Jobs, newest first (at most 50), or one job:
 tag), `writing`, and ends in `done`, `failed` or `cancelled`. A `scanner` of null means a
 USB job. On `failed`, `error` is the scanner's error code; for `not_blank`, `existing_text`
 and `existing_uri` say what the tag already holds, so the user can be asked before
-overwriting. A job whose scanner stops answering fails with `scanner_offline`.
+overwriting. A job whose scanner stops answering fails with `scanner_offline`, whether it
+had been collected or was still queued; a job cannot be queued for a scanner that is
+offline already.
 
 ### `POST api/jobs/<id>/cancel/`
 
@@ -207,7 +210,9 @@ numbers from 0 to 2^31-1, or `msgs` not a list of objects). A reader id that two
 machines share is treated as unknown until that is fixed.
 
 Every value in a message is bounded and typed before it is stored: strings are cut to the
-field's length, a `uid` that is not 8 to 20 hex digits is ignored, and so on. The
+field's length, a `uid` that is not 14 hex digits is ignored, and so on. A negative answer
+(`ok: false`) ends a job only when it answers that job's `program` or `wipe`; a refused
+`cancel` does not, since the job's `done` follows. The
 password and PACK in a `program` or `wipe` command are removed from the plugin's record of
 the command once the scanner acknowledges it. Acknowledged commands and seen messages are
 deleted after two days.

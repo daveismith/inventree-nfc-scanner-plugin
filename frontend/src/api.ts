@@ -23,6 +23,7 @@ export interface Scanner {
   online: boolean;
   last_seen: string | null;
   last_tag: Record<string, any> | null;
+  warning: string | null;
 }
 
 export interface Job {

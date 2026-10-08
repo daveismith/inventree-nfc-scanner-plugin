@@ -169,5 +169,6 @@ Firmware updates (the fleet-updates branch) are verified against the same instan
 real scanner: a release uploaded and checked, a deployment over the network (downloaded,
 restarted, confirmed), and one over USB through `dev/usb_update.py`, which follows the
 browser's sequence. Not yet verified: the fleet dashboard item and the update notice in a
-browser, and fetching from the real GitHub repository (it is private for now; the fetch is
-checked against a stand-in).
+browser, and fetching a real release from GitHub. The repository is public and the check
+reaches it with no token, but no release has been tagged yet; taking a release is checked
+against a stand-in for GitHub.

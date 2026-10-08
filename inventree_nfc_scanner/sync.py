@@ -91,8 +91,7 @@ def enqueue(machine_config, payload: dict, job: Job | None = None) -> ScannerCom
 def pending_commands(machine_config):
     """Commands not yet acknowledged, oldest first; never one for a job that has already ended."""
     return (
-        ScannerCommand.objects
-        .filter(machine=machine_config, acked_at__isnull=True)
+        ScannerCommand.objects.filter(machine=machine_config, acked_at__isnull=True)
         .exclude(job__state__in=[Job.State.DONE, Job.State.FAILED, Job.State.CANCELLED])
         .order_by("seq")
     )
@@ -296,8 +295,7 @@ def handle_sync(
         )
         commands = [
             c
-            for c in ScannerCommand.objects
-            .select_for_update()
+            for c in ScannerCommand.objects.select_for_update()
             .filter(pk__in=[c.pk for c in commands], acked_at__isnull=True)
             .order_by("seq")
             if c.job_id not in ended
@@ -326,8 +324,7 @@ def mark_stale_scanners(offline_after_s: int) -> None:
     # newest command of each scanner stays, whatever its age: the next number comes from it.
     old = timezone.now() - KEEP_BOOKKEEPING_FOR
     newest = (
-        ScannerCommand.objects
-        .order_by("machine_id", "-seq")
+        ScannerCommand.objects.order_by("machine_id", "-seq")
         .distinct("machine_id")
         .values_list("pk", flat=True)
     )

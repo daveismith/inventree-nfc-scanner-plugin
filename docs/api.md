@@ -4,7 +4,8 @@ Everything the plugin serves is under `/plugin/nfcscanner/`. Two kinds of client
 
 - **The browser**, logged in to InvenTree (session). Only the plugin's own panel needs these,
   but they are plain REST and can be used by anything with a session or an API token.
-- **A network scanner**, with an InvenTree API token, which uses one endpoint: `sync/`.
+- **A network scanner**, with an InvenTree API token, which uses one endpoint: `sync/`, and
+  fetches firmware updates from `firmware/`.
 
 Plugin URLs accept a session cookie (with CSRF token) or an `Authorization: Token …`
 header. HTTP basic authentication is not accepted on plugin URLs, only on `/api/`.
@@ -130,7 +131,10 @@ USB job. On `failed`, `error` is the scanner's error code; for `not_blank`, `exi
 and `existing_uri` say what the tag already holds, so the user can be asked before
 overwriting. A job whose scanner stops answering fails with `scanner_offline`, whether it
 had been collected or was still queued; a job cannot be queued for a scanner that is
-offline already.
+offline already. A job the scanner had taken fails with `scanner_restarted` when the scanner
+calls in after a restart (it has forgotten the job), and with `no_result` when nothing has been
+heard of it two minutes after its own timeout. A job cannot be queued for a scanner that is
+installing a firmware update (400).
 
 ### `POST api/jobs/<id>/cancel/`
 
@@ -153,6 +157,7 @@ Request:
 ```json
 {
   "reader": "nfc-34b7da52a084",
+  "fw": "0.2.0",
   "boot": 17,
   "proto": 1,
   "ack": 41,
@@ -167,6 +172,7 @@ Request:
 | Field | |
 | --- | --- |
 | `reader` | The scanner's id, from its MAC address |
+| `fw` | Optional: the firmware version it runs, for the fleet page |
 | `boot` | A number that changes whenever the scanner restarts; its message numbering starts again with it |
 | `proto` | Protocol version; this plugin speaks 1 |
 | `ack` | The highest command `seq` the scanner has acted on |
@@ -222,5 +228,124 @@ messages are deleted after two days; the numbering is kept apart and only ever g
 `done` that arrives after the job was failed as `scanner_offline` is still applied: the tag
 was written, so the record and the barcode follow.
 
+A scanner in the middle of a firmware update sends `rsp` to `ota` and `ota` events (`state`:
+`downloading`, `restarting` or `failed`, with `error` and `detail`); they move its deployment
+(see below), not a job.
+
 The reference client is `tools/sync_bridge.py` in the firmware repository, which drives a
 USB scanner through this exchange.
+
+## Firmware updates
+
+How the pieces fit is in [fleet-updates.md](fleet-updates.md). An admin here is a superuser,
+or a user whose group has change permission on InvenTree's *Admin* role (the permission
+`machine.change_machineconfig`). Everyone else gets 403 from `api/fleet/`.
+
+### For admins
+
+#### `GET api/fleet/`
+
+```json
+{
+  "scanners": [{
+    "reader": "nfc-34b7da52a084", "fw": "0.2.0", "proto": 1,
+    "last_seen": "…", "last_via": "network", "last_user": null,
+    "machine": {"id": "79b50fa8-…", "name": "Desk scanner"},
+    "outdated": false,
+    "deployment": null
+  }],
+  "firmware": [{
+    "id": 3, "version": "0.2.0", "prerelease": false, "source": "github",
+    "release_url": "https://github.com/…/releases/tag/v0.2.0", "published_at": "…",
+    "added_at": "…", "available": true, "size": 1202240, "sha256": "…", "proto": 1,
+    "settings_version": 1, "min_plugin": "0.1.0", "git_sha": "…", "merged": true,
+    "incompatible": null
+  }],
+  "newest": "0.2.0",
+  "last_check": {"at": "…", "added": [], "errors": [], "pruned": []},
+  "repo": "daveismith/inventree_nfc_scanner",
+  "policy": "deferrable"
+}
+```
+
+Every scanner the server has heard of, over the network (each `/sync`) or USB (a browser's
+check-in), with its unfinished deployment if it has one. `outdated` is true when a newer
+release than the one it runs is held. `incompatible` says why a release cannot be deployed
+(another protocol, a newer plugin needed, or its image pruned), or is null.
+
+#### `POST api/fleet/check/`
+
+Look for new releases now (otherwise every *Check for firmware every* hours). Answers
+`{"added": ["0.2.1"], "errors": [], "pruned": [], "at": "…"}`. A release is taken only when
+each file's sha256 matches the manifest and GitHub's own digest of the asset.
+
+#### `POST api/fleet/upload/`
+
+Multipart, for a server without internet access: `manifest` (the release's manifest.json),
+`app` (its app image) and optionally `merged`. 201 with the release; 400 when a file does not
+match the manifest, the manifest is not for this scanner, or the version is held already
+with a different image.
+
+#### `DELETE api/fleet/firmware/<id>/`
+
+Delete a release's images; its record goes too unless a deployment refers to it. 400 while a
+deployment of it is unfinished.
+
+#### `POST api/fleet/deploy/`
+
+```json
+{"firmware": 3, "scanners": ["nfc-34b7da52a084"], "required": null,
+ "required_after": null, "allow_downgrade": false}
+```
+
+`scanners` is a list of reader ids, or `"all"`. `required`: whether the user at a USB scanner
+may put it off (null: the *USB update policy* setting); `required_after`: from when it may not.
+Answers `{"results": [{"reader": "…", "deployment": 12} | {"reader": "…", "refused": "why"}]}`.
+Refused for a scanner: one already running that version, one mid-update, an older version
+without `allow_downgrade`, and (always) a network scanner going below the network-settings
+layout it keeps. A deployment still pending for the same scanner is superseded. 400 for an
+incompatible release.
+
+#### `GET api/fleet/deployments/?scanner=<reader id>`
+
+The last 100 deployments, newest first:
+
+```json
+[{"id": 12, "reader": "nfc-…", "version": "0.2.0", "state": "confirmed", "via": "network",
+  "from_version": "0.1.0", "required": false, "required_flag": null, "required_after": null,
+  "requested_by": "admin", "requested_at": "…", "started_at": "…", "finished_at": "…",
+  "attempts": 1, "deferrals": 0, "error": "", "detail": ""}]
+```
+
+`state`: `pending` (waiting for the scanner), `sent`, `downloading`, `restarting`, then
+`confirmed`, `failed`, `rolled_back` (it came back on the old version), `superseded` or
+`cancelled`. An attempt cut short before the restart (the scanner was busy, lost power, the
+browser closed) goes back to `pending`, up to three attempts.
+
+#### `POST api/fleet/deployments/<id>/cancel/`
+
+Withdraw a pending deployment. 400 once the scanner has started on it.
+
+#### `DELETE api/fleet/scanners/<reader id>/`
+
+Forget a scanner and its deployment history (one taken out of service). It reappears when
+it is next heard from. 400 mid-update.
+
+### For the browser with a USB scanner
+
+These need the tag programming permission, and answer only about the scanner named.
+
+- `POST api/usb/checkin/` `{"reader", "fw", "proto"}`: the browser has connected to a scanner.
+  Answers `{"reader", "update": {"id", "version", "required", "required_after", "size",
+  "sha256", "url", "deferrals"} | null, "last": {"id", "version", "state", "error",
+  "detail"} | null}`; `last` is the latest USB update's outcome, so the browser can say how
+  the one it installed went.
+- `POST api/usb/deployments/<id>/start/` `{"reader"}`: claim it to install it now.
+- `POST api/usb/deployments/<id>/defer/` `{"reader"}`: "Later". 400 if it is required.
+- `POST api/usb/deployments/<id>/report/` `{"reader", "state", "error", "detail"}`: `state`
+  is `downloading`, `restarting` or `failed`.
+
+### Images
+
+`GET firmware/<version>/<file>`: a release's app or merged image, to any signed-in user or
+API token (the scanner fetches with its own). `ETag` is its sha256.

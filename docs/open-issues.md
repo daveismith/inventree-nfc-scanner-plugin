@@ -11,20 +11,15 @@ in a realistic case; low = rough edge.
 
 ## High
 
-### 1. A job the scanner loses is never ended
+### 1. A job the scanner loses is never ended (mostly fixed on the fleet-updates branch)
 
-- Where: `sync.py` (`apply_message`, `mark_stale_scanners`), `machine.py` (`touch` stores
-  `STATE_LAST_BOOT`, which nothing reads), `views.py` `JobCancelView`.
-- Scenario: the scanner sends `waiting`, then reboots (or its `done` is lost from its RAM queue)
-  and calls in again within the offline window. The `program` command was acknowledged and
-  retired, so it is not sent again. The job stays `waiting` or `writing` for ever, the machine
-  stays `busy`, the panel polls "present a tag" indefinitely. Cancel queues a `cancel` the
-  scanner answers `no_job`, which the server deliberately ignores. `Job.timeout_s` is stored but
-  never enforced. Jobs of a deactivated scanner are never failed either.
-- Fix: enforce `timeout_s` on the server (fail SENT/WAITING/WRITING jobs older than it, with a
-  margin); when a sync's `boot` differs from the stored one, fail that machine's in-flight jobs
-  (the scanner has forgotten them); let a `cancel` end the job outright after a grace period or
-  when the scanner answers `no_job`; fail jobs of a scanner that is deactivated.
+- Fixed: a sync whose `boot` differs from the last one fails the jobs that scanner had taken
+  (`scanner_restarted`; `sync.lose_jobs_of_restarted`), and a job taken but never reported on
+  by `timeout_s` plus two minutes fails (`no_result`; `sync.expire_jobs`, run every minute).
+  Fleet updates needed it: an update waits for the scanner's jobs to end.
+- Still open: a `cancel` the scanner answers with `no_job` does not end the job at once (it
+  ends at the timeout instead); a job still `queued` for a scanner that has been deactivated
+  is never failed (it can be cancelled by hand).
 
 ### 2. Answers are unbounded, and a large one jams the reader (shared with the firmware)
 

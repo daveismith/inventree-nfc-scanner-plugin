@@ -68,6 +68,22 @@ machine and a stock location, then plays a scanner through `/sync` for a whole j
 python3 check.py
 ```
 
+`check_fleet.py` checks firmware updates (docs/fleet-updates.md): uploading and fetching
+releases (from a stand-in for GitHub it runs on port 8769, which the server reaches as
+`host.docker.internal`), deploying, and both routes step by step. It uses a scanner of its
+own, so a real scanner can stay on the air, and removes what it made:
+
+```sh
+python3 check_fleet.py
+```
+
+`usb_update.py --port /dev/cu.usbmodem…` does what the browser does when it connects to a
+USB scanner with an update waiting: check in, claim, fetch, stream it over serial, and check
+in again after the restart. Deploy something to the scanner first (a development build
+packaged with the firmware's `tools/make_release.py --dev`, uploaded on the fleet item), and
+take the scanner off the network (`nfcprog.py net disable`) if the network route should not
+get there first.
+
 ## A real scanner against this instance
 
 With the desk scanner on USB, the firmware repository's `tools/sync_bridge.py` presents it

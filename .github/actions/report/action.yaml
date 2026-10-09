@@ -26,7 +26,8 @@ runs:
         check_name: ${{ inputs.check-name }}
         files: test-results/junit-*.xml
         report_individual_runs: true
-        comment_mode: changes
+        # A branch with a pull request runs this twice (push and pull_request); one comment.
+        comment_mode: ${{ github.event_name == 'pull_request' && 'changes' || 'off' }}
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.14"

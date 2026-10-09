@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   versions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       supported: ${{ steps.read.outputs.supported }}
     steps:
@@ -41,7 +41,7 @@ jobs:
     name: server (InvenTree ${{ matrix.inventree }}, PostgreSQL)
     needs: versions
     if: github.event.schedule == '23 7 * * 1' || inputs.run == 'postgres'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +70,7 @@ jobs:
   postgres-report:
     needs: postgres
     if: always() && needs.postgres.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       checks: write
@@ -83,7 +83,7 @@ jobs:
   next:
     name: server and browser (InvenTree latest)
     if: (github.event_name == 'schedule' && github.event.schedule != '23 7 * * 1') || inputs.run == 'next'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       issues: write
@@ -141,7 +141,7 @@ jobs:
   propose-versions:
     name: propose InvenTree versions
     if: github.event.schedule == '23 7 * * 1' || inputs.run == 'versions'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       pull-requests: write

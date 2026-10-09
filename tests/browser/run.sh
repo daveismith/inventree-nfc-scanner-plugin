@@ -4,7 +4,9 @@
 #
 #   tests/browser/run.sh [--version 1.4.3] [--no-build] [pytest arguments...]
 #
-# --no-build uses the inventree-nfc-browser-tests image as it is (CI builds it with a cache).
+# The tests run in the image tests/browser/image.sh names: used as it is if it is here already,
+# else pulled from GitHub's registry, else (a change to tests.Dockerfile or requirements.txt not
+# yet built there, or no access) built here. --no-build uses the local image as it is.
 # Results (JUnit XML, and for a failed test its trace, screenshot and GIF) go to
 # test-results/; the stack's logs to test-results/browser-stack-<version>.log.
 set -eu
@@ -31,7 +33,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[ "$build" = 0 ] || $compose build --quiet tests
+local_image=inventree-nfc-browser-tests  # the name compose.yaml runs
+if [ "$build" = 1 ]; then
+    image=$("$here/tests/browser/image.sh")
+    hash=$("$here/tests/browser/image.sh" --hash)
+    have=$(docker image inspect --format '{{ index .Config.Labels "nfc.browser-tests.hash" }}' "$local_image" 2>/dev/null || true)
+    if [ "$have" != "$hash" ]; then
+        if docker pull --quiet "$image" >/dev/null 2>&1 || { sleep 10; docker pull --quiet "$image" >/dev/null 2>&1; }; then
+            docker tag "$image" "$local_image"
+        else
+            echo "building the test image ($image is not in the registry, or not reachable from here)" >&2
+            docker build --quiet --label "nfc.browser-tests.hash=$hash" -f "$here/tests/browser/tests.Dockerfile" \
+                -t "$local_image" "$here/tests/browser" >/dev/null
+        fi
+    fi
+fi
 # What is not here yet; an image already pulled is used as it is.
 $compose pull --quiet --ignore-buildable --policy missing 2>/dev/null || true
 $compose run --rm tests python -m pytest -m browser \

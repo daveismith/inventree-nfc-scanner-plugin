@@ -65,35 +65,83 @@ jobs:
           path: test-results/
           retention-days: 14
 
+  browser-image:
+    # The browser layer's test image, built once per change to what goes into it and kept in
+    # GitHub's registry (tests/browser/image.sh). Most runs find it there and build nothing. A
+    # pull request from a fork cannot push; its browser jobs build it themselves if they must.
+    name: browser test image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: image
+        run: |
+          echo "ref=$(tests/browser/image.sh)" >> "$GITHUB_OUTPUT"
+          echo "hash=$(tests/browser/image.sh --hash)" >> "$GITHUB_OUTPUT"
+      - name: Log in to GitHub's registry
+        continue-on-error: true  # a fork's token may not; then nothing is pushed
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Is it there already?
+        id: check
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: |
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "there=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE is in the registry: nothing to build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "there=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.check.outputs.there == 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # BuildKit from Google's mirror of Docker Hub.
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+      - name: Build and push it
+        if: steps.check.outputs.there == 'false'
+        # A fork's pull request cannot push: its browser jobs build the image themselves.
+        continue-on-error: ${{ github.event.pull_request.head.repo.full_name != github.repository && github.event_name == 'pull_request' }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tests/browser
+          file: tests/browser/tests.Dockerfile
+          tags: ${{ steps.image.outputs.ref }}
+          labels: nfc.browser-tests.hash=${{ steps.image.outputs.hash }}
+          push: true
+
   browser:
     name: browser (InvenTree ${{ matrix.inventree }})
-    needs: versions
+    needs: [versions, browser-image]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
         inventree: ${{ fromJSON(needs.versions.outputs.supported) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to GitHub's registry
+        continue-on-error: true  # not needed once the package is public
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          # BuildKit from Google's mirror of Docker Hub: one image less from Docker Hub.
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-      - name: Build the Playwright image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: tests/browser
-          file: tests/browser/tests.Dockerfile
-          tags: inventree-nfc-browser-tests
-          load: true
-          cache-from: type=gha,scope=browser-tests
-          cache-to: type=gha,mode=max,scope=browser-tests
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/pull-inventree
         with:
           inventree: ${{ matrix.inventree }}
       - name: Test
+        # run.sh pulls the test image the browser-image job made sure of (or builds it).
         run: >
-          tests/browser/run.sh --version ${{ matrix.inventree }} --no-build
+          tests/browser/run.sh --version ${{ matrix.inventree }}
           --junitxml=test-results/junit-${{ matrix.inventree }}-browser.xml
           -o junit_suite_name="InvenTree ${{ matrix.inventree }}, browser"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

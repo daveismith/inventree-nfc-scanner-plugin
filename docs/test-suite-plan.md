@@ -376,6 +376,10 @@ the weekly run.
   found three InvenTree behaviours the fixtures work around (tests/README.md).
   - Not covered yet: "a required-from date" and "Deploy to all" in the browser (both are
     in the server suite), and `FakeScanner` kept honest against the firmware (step 5).
+- **The browser test image** is built once per change to its Dockerfile or requirements and kept
+  in GitHub's registry, tagged with their hash (`tests/browser/image.sh`); runs pull it. On a
+  pull request run that cut the slowest browser job's image step from 2½–4 minutes (a build,
+  even from cache) to a pull.
 - **5 and 7: not started.**
 
 ## Decisions

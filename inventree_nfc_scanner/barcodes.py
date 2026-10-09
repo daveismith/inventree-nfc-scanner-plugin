@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import logging
 import re
+from contextlib import contextmanager
 
 from django.apps import apps
-from django.db import transaction
+from django.db import connection, transaction
 
 from InvenTree.helpers import hash_barcode
 from InvenTree.models import InvenTreeBarcodeMixin
@@ -53,6 +54,31 @@ def _may_change(actor, obj) -> bool:
     return bool(actor and actor.has_perm(f"{opts.app_label}.change_{opts.model_name}"))
 
 
+@contextmanager
+def _uid_lock(barcode_hash: str):
+    """Links of one UID take turns, so that two at once cannot both find it unheld and both
+    take it (tests/server/test_concurrency.py). The lock is per UID, held to the end of the
+    transaction on PostgreSQL; MySQL's is named and released here. SQLite runs one writer at a
+    time already."""
+    if connection.vendor == "postgresql":
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT pg_advisory_xact_lock(%s)", [int(barcode_hash[:15], 16)]
+            )
+        yield
+    elif connection.vendor == "mysql":
+        name = f"nfc-uid-{barcode_hash}"
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT GET_LOCK(%s, 30)", [name])
+        try:
+            yield
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT RELEASE_LOCK(%s)", [name])
+    else:
+        yield
+
+
 def link_uid(location, uid, actor) -> str:
     """Make `uid` the location's barcode, on behalf of `actor`. Returns what was done.
 
@@ -70,7 +96,10 @@ def link_uid(location, uid, actor) -> str:
     if location.barcode_hash == barcode_hash:
         return "already linked"
 
-    with transaction.atomic():
+    with transaction.atomic(), _uid_lock(barcode_hash):
+        location.refresh_from_db(fields=["barcode_hash"])
+        if location.barcode_hash == barcode_hash:
+            return "already linked"  # linked by another request while this one waited
         moved_from = []
         for other in holders_of(barcode_hash):
             if other == location:

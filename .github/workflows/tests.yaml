@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   versions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       supported: ${{ steps.read.outputs.supported }}
     steps:
@@ -39,7 +39,7 @@ jobs:
   server:
     name: server (InvenTree ${{ matrix.inventree }}, SQLite)
     needs: versions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +70,7 @@ jobs:
     # GitHub's registry (tests/browser/image.sh). Most runs find it there and build nothing. A
     # pull request from a fork cannot push; its browser jobs build it themselves if they must.
     name: browser test image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
@@ -118,7 +118,7 @@ jobs:
   browser:
     name: browser (InvenTree ${{ matrix.inventree }})
     needs: [versions, browser-image]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: read
@@ -156,7 +156,7 @@ jobs:
   report:
     needs: [server, browser]
     if: always() && (needs.server.result != 'skipped' || needs.browser.result != 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       checks: write

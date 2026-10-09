@@ -178,6 +178,20 @@ def _keep_transcript(request, scanner):
         )
 
 
+def jobs_of(api, location, count=1, timeout=10.0):
+    """The location's job records, newest first, once there are `count` of them. The panel
+    shows a USB job's outcome and then records it on the server without waiting, so a test
+    that reads the records as soon as the page shows the outcome may be early."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        jobs = api.get(f"{P}/api/jobs/?location={location['pk']}")
+        if len(jobs) >= count or time.monotonic() > deadline:
+            return jobs
+        time.sleep(0.2)
+
+
 def open_panel(page: Page, location: dict):
     """The location's NFC tag panel."""
     page.goto(f"/web/stock/location/{location['pk']}/nfc-tag")

@@ -4,7 +4,7 @@ import re
 
 from playwright.sync_api import expect
 
-from .conftest import P
+from .conftest import jobs_of
 from .usb_scanner import Tag
 
 
@@ -24,6 +24,6 @@ def test_program_a_blank_tag_over_usb(admin_page, usb, location, api):
     (program,) = usb.commands("program")
     assert program["ndef"].startswith("9101")
     assert usb.tag.text == f"INV-SL{location['pk']}"
-    jobs = api.get(f"{P}/api/jobs/?location={location['pk']}")
+    jobs = jobs_of(api, location)
     assert jobs[0]["state"] == "done" and jobs[0]["uid"] == "04A1B2C3D4E5F6"
     assert re.search(r"/web/stock/location/\d+$", usb.tag.uri)

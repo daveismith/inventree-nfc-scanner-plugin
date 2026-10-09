@@ -40,6 +40,14 @@ tests/browser/run.sh                          # every browser test, against the 
 tests/browser/run.sh --version 1.5.6 -k usb   # another version; any pytest arguments
 ```
 
+The tests run in an image with Playwright, Chromium and the test packages, named by
+`browser/image.sh`: `ghcr.io/daveismith/inventree-nfc-scanner-plugin/browser-tests:<hash>`, the
+hash being of `browser/tests.Dockerfile` and `browser/requirements.txt`. `run.sh` uses a local
+copy with that hash, else pulls it from GitHub's registry, else builds it here (a change to
+either file, before CI has pushed it); `--no-build` uses the local image as it is. CI's
+`browser-image` job pushes a tag that is not there yet, so it is built once per change, not on
+every run.
+
 It starts the stack in `browser/compose.yaml`: InvenTree (its own image, with the plugin
 installed from the working tree), PostgreSQL, Redis, and a container with Playwright and
 Chromium that runs the tests. They share one Docker network declared internal: nothing is
@@ -155,15 +163,16 @@ Each of these is commented where it is done; together they are what the spike fo
 
 ## In CI
 
-- `.github/workflows/tests.yaml`, on every pull request, on `main` after a merge, and by hand
-  (Actions → Tests → Run workflow) for any other branch: a server leg (SQLite) and a
-  browser leg per supported version, then one job that publishes the results as the **Test
-  results** check run (with a comment on the pull request when results change), and combines
-  the server legs' coverage. A browser leg's **results-…-browser** artifact holds the trace,
-  screenshot, GIF and serial transcript of each failed test, and the stack's logs. Failures are
-  annotated on the failing line. Each run's summary shows the coverage table; the full HTML
-  report is the run's **coverage-html** artifact, and each leg's JUnit XML and coverage data
-  are its **results-…** artifacts (14 days).
+- `.github/workflows/tests.yaml` (first, `browser-image`: the browser test image, pushed to
+  GitHub's registry if its tag is not there yet), on every pull request, on `main` after a
+  merge, and by hand (Actions → Tests → Run workflow) for any other branch: a server leg
+  (SQLite) and a browser leg per supported version, then one job that publishes the results as
+  the **Test results** check run (with a comment on the pull request when results change), and
+  combines the server legs' coverage. A browser leg's **results-…-browser** artifact holds the
+  trace, screenshot, GIF and serial transcript of each failed test, and the stack's logs.
+  Failures are annotated on the failing line. Each run's summary shows the coverage table; the
+  full HTML report is the run's **coverage-html** artifact, and each leg's JUnit XML and
+  coverage data are its **results-…** artifacts (14 days).
 - `.github/workflows/scheduled.yaml`: weekly, the same against PostgreSQL (**Test results
   (PostgreSQL)**); nightly, the server and browser layers against InvenTree's `latest` image, opening or updating an issue
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be

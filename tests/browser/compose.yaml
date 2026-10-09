@@ -3,11 +3,12 @@
 #
 # Everything is on one network declared internal: nothing is published on the host, and
 # nothing in here can reach the internet. Only building and pulling the images, before the
-# stack starts, uses the network.
+# stack starts, uses the network. PostgreSQL and Redis come from Google's mirror of Docker
+# Hub, which keeps them out of Docker Hub's pull limits.
 
 services:
   db:
-    image: postgres:17
+    image: mirror.gcr.io/library/postgres:17
     environment:
       POSTGRES_USER: inventree
       POSTGRES_PASSWORD: inventree
@@ -19,7 +20,7 @@ services:
     networks: [stack]
 
   cache:
-    image: redis:7-alpine
+    image: mirror.gcr.io/library/redis:7-alpine
     networks: [stack]
 
   inventree:

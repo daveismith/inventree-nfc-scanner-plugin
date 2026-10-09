@@ -58,7 +58,7 @@ out to hold the same, with the requirements installed):
 2. Run it with the working tree mounted, `--network none`, install the plugin from the tree,
    and run pytest with test settings (`tests/inventree_settings.py`): `tests/run.sh`.
 
-The database is SQLite in a temporary directory on every push and pull request. A weekly
+The database is SQLite in a temporary directory on every pull request and on `main`. A weekly
 run (and any run started by hand) repeats the server suite against PostgreSQL, since production
 uses it and the row locks (`select_for_update`) only mean something there. Tests that need real
 row locks carry a `postgres` marker and are skipped on SQLite. For it, `tests/run.sh --db
@@ -257,7 +257,7 @@ the fake plugin listens on its loopback.
 
 | Leg | Versions | When |
 | --- | --- | --- |
-| Supported | 1.4.3 and 1.5.6: the oldest supported, and the newest patch of each minor since | every push and pull request; blocking |
+| Supported | 1.4.3 and 1.5.6: the oldest supported, and the newest patch of each minor since | every pull request, and `main`; blocking |
 | Next | `latest` image / `master` source | nightly, and on demand; not blocking; a failure opens or updates an issue |
 
 - **The list lives in one file** (`tests/inventree-versions.json`), read by the workflow's

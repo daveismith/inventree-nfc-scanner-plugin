@@ -155,7 +155,8 @@ Each of these is commented where it is done; together they are what the spike fo
 
 ## In CI
 
-- `.github/workflows/tests.yaml`, on every push and pull request: a server leg (SQLite) and a
+- `.github/workflows/tests.yaml`, on every pull request, on `main` after a merge, and by hand
+  (Actions → Tests → Run workflow) for any other branch: a server leg (SQLite) and a
   browser leg per supported version, then one job that publishes the results as the **Test
   results** check run (with a comment on the pull request when results change), and combines
   the server legs' coverage. A browser leg's **results-…-browser** artifact holds the trace,
@@ -167,6 +168,12 @@ Each of these is commented where it is done; together they are what the spike fo
   (PostgreSQL)**); nightly, the server and browser layers against InvenTree's `latest` image, opening or updating an issue
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be
   started by hand from the Actions tab.
+
+CI logs in to Docker Hub with the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+(a read-only access token): anonymous pulls are limited to about 10 an hour per IP address,
+which GitHub's runners share, and fail with 429 Too Many Requests. Without the secrets (a pull
+request from a fork) it pulls anonymously. PostgreSQL and Redis come from Google's mirror,
+`mirror.gcr.io`, which does not carry InvenTree's image.
 
 ## Adding an InvenTree version
 

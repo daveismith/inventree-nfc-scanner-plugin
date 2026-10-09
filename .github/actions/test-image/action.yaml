@@ -1,10 +1,10 @@
 name: Test image
 description: >
   Build inventree-nfc-test:<version> (tests/Dockerfile) from InvenTree's image, pulled with
-  retries. A plain docker build, so the base is the local copy and Docker Hub is asked once.
+  retries. A plain docker build, so the base is the local copy and the registry is asked once.
 inputs:
   inventree:
-    description: The InvenTree version (an inventree/inventree image tag)
+    description: The InvenTree version (an image tag)
     required: true
 runs:
   using: composite

@@ -1,17 +1,18 @@
 name: Pull InvenTree
 description: >
-  Pull inventree/inventree:<version>, retrying: it is only on Docker Hub, whose sign-in service
-  answers GitHub's runners with timeouts and 504s now and then. Later steps use the local copy.
+  Pull ghcr.io/inventree/inventree:<version> (InvenTree's images on GitHub's registry, the
+  same as on Docker Hub), retrying: a registry has a bad moment now and then. Later steps use
+  the local copy.
 inputs:
   inventree:
-    description: The InvenTree version (an inventree/inventree image tag)
+    description: The InvenTree version (an image tag)
     required: true
 runs:
   using: composite
   steps:
     - shell: bash
       env:
-        IMAGE: inventree/inventree:${{ inputs.inventree }}
+        IMAGE: ghcr.io/inventree/inventree:${{ inputs.inventree }}
       run: |
         for attempt in 1 2 3 4 5; do
           docker pull --quiet "$IMAGE" && exit 0

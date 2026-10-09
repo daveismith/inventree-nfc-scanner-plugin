@@ -14,7 +14,7 @@ are in [docs/test-suite-plan.md](../docs/test-suite-plan.md).
 
 ```sh
 tests/run.sh                                  # pure and server, against the oldest supported InvenTree
-tests/run.sh --version 1.5.6                  # another version (an inventree/inventree image tag)
+tests/run.sh --version 1.5.6                  # another version (an InvenTree image tag)
 tests/run.sh --db postgres                    # PostgreSQL, which also runs the concurrency tests
 tests/run.sh --no-build tests/server/test_jobs.py -k cancel -x   # skip the image check; any pytest arguments
 ```
@@ -169,13 +169,11 @@ Each of these is commented where it is done; together they are what the spike fo
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be
   started by hand from the Actions tab.
 
-CI logs in to Docker Hub with the repository variable `DOCKERHUB_USERNAME` and the secret
-`DOCKERHUB_TOKEN` (a read-only access token; nothing is pushed): anonymous pulls are limited to
-about 10 an hour per IP address, which GitHub's runners share, and fail with 429 Too Many
-Requests. Without them (a pull request from a fork gets no secrets), or if the login fails, it
-pulls anonymously. The username is a variable rather than a secret because a secret is masked
-wherever it appears in the logs. PostgreSQL and Redis come from Google's mirror,
-`mirror.gcr.io`, which does not carry InvenTree's image.
+Nothing in CI comes from Docker Hub, whose anonymous pulls are limited to about 10 an hour per
+IP address, which GitHub's runners share: InvenTree's images come from GitHub's registry
+(`ghcr.io/inventree/inventree`, the same images as on Docker Hub), pulled with retries;
+PostgreSQL, Redis and BuildKit from Google's mirror of Docker Hub (`mirror.gcr.io`);
+Playwright's from Microsoft's registry. No login is needed for any of them.
 
 ## Adding an InvenTree version
 

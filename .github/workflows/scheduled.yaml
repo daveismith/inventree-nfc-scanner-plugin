@@ -48,10 +48,6 @@ jobs:
         inventree: ${{ fromJSON(needs.versions.outputs.supported) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/docker-hub-login
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          token: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: ./.github/actions/test-image
         with:
           inventree: ${{ matrix.inventree }}
@@ -93,10 +89,6 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/docker-hub-login
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          token: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: ./.github/actions/test-image
         with:
           inventree: latest
@@ -128,7 +120,7 @@ jobs:
         run: |
           title="Tests fail against InvenTree's next release"
           number=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
-          body="The nightly run against \`inventree/inventree:latest\` failed: $RUN"
+          body="The nightly run against \`ghcr.io/inventree/inventree:latest\` failed: $RUN"
           if [ -n "$number" ]; then
             gh issue comment "$number" --body "$body"
           else

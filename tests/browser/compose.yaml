@@ -24,7 +24,7 @@ services:
     networks: [stack]
 
   inventree:
-    image: inventree/inventree:${INVENTREE_VERSION:?set INVENTREE_VERSION}
+    image: ghcr.io/inventree/inventree:${INVENTREE_VERSION:?set INVENTREE_VERSION}
     # The image's entrypoint (init.sh) prepares the data directory, then runs this.
     command: ["/plugin/tests/browser/server-start.sh"]
     volumes:

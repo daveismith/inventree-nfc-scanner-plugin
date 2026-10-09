@@ -7,7 +7,13 @@
 
 name: Tests
 
-on: ["push", "pull_request"]
+# Pull requests, and main once merged: a branch with a pull request would otherwise run
+# twice, for the push and for the pull request. Any other branch: Actions → Run workflow.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

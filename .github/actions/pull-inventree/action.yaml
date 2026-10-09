@@ -1,0 +1,22 @@
+name: Pull InvenTree
+description: >
+  Pull ghcr.io/inventree/inventree:<version> (InvenTree's images on GitHub's registry, the
+  same as on Docker Hub), retrying: a registry has a bad moment now and then. Later steps use
+  the local copy.
+inputs:
+  inventree:
+    description: The InvenTree version (an image tag)
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        IMAGE: ghcr.io/inventree/inventree:${{ inputs.inventree }}
+      run: |
+        for attempt in 1 2 3 4 5; do
+          docker pull --quiet "$IMAGE" && exit 0
+          echo "::warning::pulling $IMAGE failed (attempt $attempt of 5); trying again"
+          sleep $((attempt * 20))
+        done
+        exit 1

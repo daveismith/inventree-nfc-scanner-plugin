@@ -14,7 +14,7 @@ are in [docs/test-suite-plan.md](../docs/test-suite-plan.md).
 
 ```sh
 tests/run.sh                                  # pure and server, against the oldest supported InvenTree
-tests/run.sh --version 1.5.6                  # another version (an inventree/inventree image tag)
+tests/run.sh --version 1.5.6                  # another version (an InvenTree image tag)
 tests/run.sh --db postgres                    # PostgreSQL, which also runs the concurrency tests
 tests/run.sh --no-build tests/server/test_jobs.py -k cancel -x   # skip the image check; any pytest arguments
 ```
@@ -155,7 +155,8 @@ Each of these is commented where it is done; together they are what the spike fo
 
 ## In CI
 
-- `.github/workflows/tests.yaml`, on every push and pull request: a server leg (SQLite) and a
+- `.github/workflows/tests.yaml`, on every pull request, on `main` after a merge, and by hand
+  (Actions → Tests → Run workflow) for any other branch: a server leg (SQLite) and a
   browser leg per supported version, then one job that publishes the results as the **Test
   results** check run (with a comment on the pull request when results change), and combines
   the server legs' coverage. A browser leg's **results-…-browser** artifact holds the trace,
@@ -167,6 +168,12 @@ Each of these is commented where it is done; together they are what the spike fo
   (PostgreSQL)**); nightly, the server and browser layers against InvenTree's `latest` image, opening or updating an issue
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be
   started by hand from the Actions tab.
+
+Nothing in CI comes from Docker Hub, whose anonymous pulls are limited to about 10 an hour per
+IP address, which GitHub's runners share: InvenTree's images come from GitHub's registry
+(`ghcr.io/inventree/inventree`, the same images as on Docker Hub), pulled with retries;
+PostgreSQL, Redis and BuildKit from Google's mirror of Docker Hub (`mirror.gcr.io`);
+Playwright's from Microsoft's registry. No login is needed for any of them.
 
 ## Adding an InvenTree version
 

@@ -7,7 +7,7 @@
 # tree and installs it, so a change needs no rebuild. The tests run with no network at all.
 
 ARG INVENTREE_VERSION=1.4.3
-FROM inventree/inventree:${INVENTREE_VERSION}
+FROM ghcr.io/inventree/inventree:${INVENTREE_VERSION}
 
 COPY requirements.txt /tmp/test-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/test-requirements.txt

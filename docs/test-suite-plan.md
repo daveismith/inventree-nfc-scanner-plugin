@@ -30,7 +30,8 @@ Verified against InvenTree 1.4.3 and 1.5.6:
   `DEFAULT_AUTO_FIELD` is `AutoField`, which is why `makemigrations` wants to alter the
   plugin's `BigAutoField` ids.
 - **Docker images** are published for every release (`inventree/inventree:1.4.3`, `1.5.6`,
-  `stable`, `latest`).
+  `stable`, `latest`), on Docker Hub and, identical, on GitHub's registry
+  (`ghcr.io/inventree/inventree`), which the tests use.
 - **The plugin template** (`inventree/plugin-creator`) runs Playwright against a server
   started with `invoke dev.server` on the runner, with SQLite. It has no backend tests.
 
@@ -53,12 +54,12 @@ layer and a developer can run any of them locally.
 As built (the first design checked out InvenTree's source per version; its Docker image turned
 out to hold the same, with the requirements installed):
 
-1. Build `inventree-nfc-test:<version>`, `FROM inventree/inventree:<version>` with the test
+1. Build `inventree-nfc-test:<version>`, `FROM ghcr.io/inventree/inventree:<version>` with the test
    packages added (`tests/Dockerfile`). In CI the layers are cached per version.
 2. Run it with the working tree mounted, `--network none`, install the plugin from the tree,
    and run pytest with test settings (`tests/inventree_settings.py`): `tests/run.sh`.
 
-The database is SQLite in a temporary directory on every push and pull request. A weekly
+The database is SQLite in a temporary directory on every pull request and on `main`. A weekly
 run (and any run started by hand) repeats the server suite against PostgreSQL, since production
 uses it and the row locks (`select_for_update`) only mean something there. Tests that need real
 row locks carry a `postgres` marker and are skipped on SQLite. For it, `tests/run.sh --db
@@ -122,7 +123,7 @@ it can reach the internet; only pulling and building the images, before it start
 | --- | --- | --- |
 | `db` | `postgres:17` | InvenTree's database |
 | `cache` | `redis:7-alpine` | the shared cache the plugin needs for scanner status |
-| `inventree` | `inventree/inventree:<version>`, the plugin installed from the mounted working tree at start | the server: migrated, static files collected, then gunicorn with two workers |
+| `inventree` | `ghcr.io/inventree/inventree:<version>`, the plugin installed from the mounted working tree at start | the server: migrated, static files collected, then gunicorn with two workers |
 | `tests` | `mcr.microsoft.com/playwright/python` with the test packages and ffmpeg | pytest, Playwright and Chromium, the simulated scanner, and the stand-in for GitHub |
 
 Differences from the first design, each for a reason found on the way:
@@ -257,7 +258,7 @@ the fake plugin listens on its loopback.
 
 | Leg | Versions | When |
 | --- | --- | --- |
-| Supported | 1.4.3 and 1.5.6: the oldest supported, and the newest patch of each minor since | every push and pull request; blocking |
+| Supported | 1.4.3 and 1.5.6: the oldest supported, and the newest patch of each minor since | every pull request, and `main`; blocking |
 | Next | `latest` image / `master` source | nightly, and on demand; not blocking; a failure opens or updates an issue |
 
 - **The list lives in one file** (`tests/inventree-versions.json`), read by the workflow's

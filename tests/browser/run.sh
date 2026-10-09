@@ -32,7 +32,8 @@ cleanup() {
 trap cleanup EXIT
 
 [ "$build" = 0 ] || $compose build --quiet tests
-$compose pull --quiet --ignore-buildable 2>/dev/null || true
+# What is not here yet; an image already pulled is used as it is.
+$compose pull --quiet --ignore-buildable --policy missing 2>/dev/null || true
 $compose run --rm tests python -m pytest -m browser \
     --output test-results/browser --video retain-on-failure --screenshot only-on-failure \
     --tracing retain-on-failure "$@"

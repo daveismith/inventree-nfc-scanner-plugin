@@ -2,8 +2,9 @@
 # source tree next to it. For developing and testing the plugin; see dev/README.md.
 #
 # Adapted from InvenTree's contrib/container/docker-compose.yml (1.4.3). Differences: the
-# plugin source is mounted into the server and worker, the proxy listens on a high port, and
-# an admin user is created from .env.
+# plugin source is mounted into the server and worker, the proxy listens on a high port, an
+# admin user is created from .env, and InvenTree's image comes from GitHub's registry (the
+# same image as on Docker Hub, without its pull limits).
 
 services:
     inventree-db:
@@ -32,7 +33,7 @@ services:
         restart: always
 
     inventree-server:
-        image: inventree/inventree:${INVENTREE_TAG:-stable}
+        image: ghcr.io/inventree/inventree:${INVENTREE_TAG:-stable}
         container_name: nfcdev-server
         expose:
             - ${INVENTREE_WEB_PORT:-8000}
@@ -50,7 +51,7 @@ services:
         restart: unless-stopped
 
     inventree-worker:
-        image: inventree/inventree:${INVENTREE_TAG:-stable}
+        image: ghcr.io/inventree/inventree:${INVENTREE_TAG:-stable}
         container_name: nfcdev-worker
         command: invoke worker
         depends_on:

@@ -42,7 +42,7 @@ if [ "$db" = postgres ]; then
     trap 'docker rm -f "$name-db" >/dev/null 2>&1; docker network rm "$name" >/dev/null 2>&1' EXIT
     docker run -d --name "$name-db" --network "$name" --network-alias db \
         -e POSTGRES_USER=inventree -e POSTGRES_PASSWORD=inventree -e POSTGRES_DB=inventree \
-        postgres:17 >/dev/null
+        mirror.gcr.io/library/postgres:17 >/dev/null
     i=0
     until docker exec "$name-db" pg_isready -q -U inventree; do
         i=$((i + 1)); [ $i -lt 60 ] || { echo "PostgreSQL did not start" >&2; exit 1; }

@@ -46,8 +46,7 @@ InvenTree in Docker, as on the Raspberry Pi:
    The plugin is installed but not yet active.
 
 3. **Turn on the plugin integrations** under *Admin Center → Settings → Plugin Settings*:
-   URL integration, app integration, interface integration, event integration, and
-   schedule integration. Set the global *Base URL* to the address users reach InvenTree
+   URL integration, app integration, interface integration and schedule integration. Set the global *Base URL* to the address users reach InvenTree
    at (`https://inventree.example`): it goes onto every tag.
 
 4. **Activate the plugin** under *Admin Center → Plugins*, then restart the server and
@@ -61,7 +60,11 @@ InvenTree in Docker, as on the Raspberry Pi:
 
    The tag password is one secret shared by every tag the server programs, and every user
    who may program tags receives it, since their scanner needs it to write the tag. Give
-   the stock-location change permission with that in mind. Each network scanner should
+   the stock-location change permission with that in mind.
+
+   **Set the tag password once, before programming tags, and leave it.** The plugin writes
+   with the current password only: a tag protected with an earlier one cannot be reprogrammed
+   or wiped from InvenTree once the setting changes (a known gap; see docs/open-issues.md). Each network scanner should
    have an InvenTree user of its own: a token serves every scanner configured with its
    user, and the dashboard warns when two share one.
 
@@ -78,7 +81,10 @@ work against any server.
 
 1. *Admin Center → Machines → Add*: type *NFC Scanner*, driver *Network scanner*. Set its
    *Reader ID* to what the scanner reports (`nfc-` and its MAC in lower-case hex, e.g.
-   `nfc-34b7da52a084`; the firmware's `info` and USB serial number show it).
+   `nfc-34b7da52a084`). The scanner says it in its `info` and `hello` (`reader`), and
+   `nfcprog.py net` shows it; the dashboard's fleet page lists it once the scanner has been
+   connected to a browser. The USB serial number is the same MAC in upper case without the
+   prefix (`34B7DA52A084`), which does not match.
 2. Make a user for the scanner (one per scanner, so a lost one can be revoked alone), with
    no permissions beyond logging in, and set it as the machine's *User*.
 3. Log in as that user and create an API token (*user settings → API tokens*). Give the
@@ -89,7 +95,8 @@ The machine shows *Online* on the Machines page once the scanner has called in.
 ### Long polling
 
 With *Long polling* on, a scanner's request is held until a job is queued for it, so jobs
-start at once. Each held request occupies a web worker for up to *Longest hold* seconds.
+start at once. Each held request occupies a web worker thread for up to *Longest hold*
+seconds.
 Off, scanners poll once a second and a job starts within that. On a Raspberry Pi with few
 gunicorn workers, leave it off unless there is one scanner and the workers have been counted.
 

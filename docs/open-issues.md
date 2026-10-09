@@ -21,69 +21,47 @@ in a realistic case; low = rough edge.
   ends at the timeout instead); a job still `queued` for a scanner that has been deactivated
   is never failed (it can be cancelled by hand).
 
-### 2. Answers are unbounded, and a large one jams the reader (shared with the firmware)
+### 2. Answers are unbounded, and a large one jams the reader (fixed for 1.0)
 
-- Where: `sync.py` `handle_sync` step 3 sends every pending command; the reader reads 8 KB.
-- Scenario: around 30 queued jobs for one reader. Each cancel adds a `cancel` command and makes
-  it worse. The reader keeps calling, so it is never marked offline; only deactivating the
-  machine clears it.
-- Fix: cap `cmds` per answer (the reader takes two per call); refuse or queue-limit new jobs for
-  a scanner with many pending; see also 4.
+- Fixed: an answer carries at most two commands (`sync.MAX_CMDS_PER_ANSWER`), all the reader
+  takes per call; the rest follow. The firmware's 1.0 release names this plugin release as its
+  oldest supported plugin for that reason. Checked in `dev/check_rules.py`.
 
 ## Medium
 
-### 3. A scanner's token can link chosen UIDs, with the job creator's permissions
+### 3. A scanner's token can link chosen UIDs, with the job creator's permissions (fixed for 1.0)
 
-- Where: `sync.py` `apply_message` (`done` takes `uid` from the message; the late-`done`
-  exception for jobs failed as `scanner_offline` has no age limit), `barcodes.py` `link_uid`
-  (checks only that the actor is active, not that they still hold `change_stocklocation`).
-- Scenario: a leaked scanner token (its user is meant to hold no permissions) waits for or
-  forces `scanner_offline` failures, then sends `done` messages with chosen UIDs and moves other
-  objects' barcodes as the admin who queued those jobs. An hours-late `done` can also pull a UID
-  back to an old bin after the tag was re-programmed elsewhere.
-- Fix: bound the late-`done` path (an age limit; only if no newer job or link exists for that
-  location); re-check the creator's `change_stocklocation` at link time; consider whether a
-  scanner may choose the UID at all (the reader could report the UID of the tag it was told to
-  write, but the server cannot verify it).
+- Fixed: a `done` for a job already given up on (`scanner_offline` or `no_result`) is believed
+  only within 30 minutes and only if the location has had no newer job
+  (`sync._late_done_believed`); `link_uid` checks that the user who queued the job may still
+  change stock locations. A scanner can still report any UID for a job it was really given:
+  the server cannot verify which tag was written.
 
-### 4. Several jobs can be queued for one scanner, but the reader runs one
+### 4. Several jobs can be queued for one scanner, but the reader runs one (fixed for 1.0)
 
-- Where: `views.py` `JobListView.post` (no check for an unfinished job on that scanner);
-  `sync.py` turns the reader's `busy` refusal into a failed job.
-- Scenario: two users or two tabs queue jobs for the same scanner; every job after the first
-  fails with `busy` within a second instead of waiting its turn.
-- Fix: refuse (409) or queue server-side, sending the next command only when the previous job
-  has ended.
+- Fixed: a job for a scanner with an unfinished one is refused with 409, naming it; the panel
+  shows the server's message.
 
-### 5. A message is marked seen before it is applied
+### 5. A message is marked seen before it is applied (fixed for 1.0)
 
-- Where: `sync.py` `handle_sync` step 2: `ScannerMessage.get_or_create`, then `apply_message`,
-  not in one transaction.
-- Scenario: a transient database error or a process death between the two steps; the scanner's
-  resend is then treated as a duplicate and dropped. A lost `done` means the barcode is never
-  linked and the job stays in `writing` (compounds 1).
-- Fix: apply each message inside the transaction that records it, and roll both back together.
+- Fixed: recording a message and applying it are one transaction; a message that raises is
+  still recorded (in a savepoint of its own), so one bad message cannot stall the exchange.
 
-### 6. USB job ids collide with plugin job ids (shared with the firmware)
+### 6. USB job ids collide with plugin job ids (fixed for 1.0)
 
-- Where: `sync.py` `apply_message` looks a job up by `id` within the machine; the reader
-  forwards events of USB-started jobs too (`nfcprog.py` defaults to `--id 1`; the panel uses
-  `Date.now() % 1000000`).
-- Scenario: a USB `done` with id 1 matches plugin job 1 (in particular one re-opened by the
-  late-`done` path) and links the new tag's UID to that job's location.
-- Fix: the reader should forward only events of jobs the server started (firmware side), and
-  the server should ignore events whose job it did not send a command for recently (e.g. require
-  an unacknowledged or recently retired command for that job id).
+- Fixed on both sides: the firmware sends a USB job's events to local links only, and the
+  plugin ignores events naming a job whose command it never sent to that scanner
+  (`sync._was_sent`).
 
-### 7. The plugin cannot reach tags protected with an earlier password
+### 7. The plugin cannot reach tags protected with an earlier password (deferred past 1.0)
 
 - Where: `views.py` `tag_payload` / `JobListView.post`, `Panel.tsx` `programUsb`: only `pwd`
   and `pack` are sent; the firmware supports `old_pwd`.
 - Scenario: an admin changes or clears *Tag password*; every tag protected earlier fails with
-  `auth_failed` or `auth_required` on both routes, with no way to recover and no warning in the
-  README.
-- Fix: keep the previous password(s) as a protected setting and send `old_pwd`; warn in the
-  settings description and README.
+  `auth_failed` or `auth_required` on both routes.
+- For 1.0 the README says to set the password once, before programming tags. Fix later: keep
+  the previous password(s) as a protected setting and send `old_pwd`; the firmware's password
+  change is also not tear-safe (its list, item 6).
 
 ### 8. The network update path has no server side (fixed by fleet updates)
 
@@ -99,12 +77,9 @@ in a realistic case; low = rough edge.
 - Fix: bind the proxy to `127.0.0.1` by default and make LAN exposure (needed for a real reader)
   an explicit opt-in, documented with its risk.
 
-### 10. The README tells admins to read the reader id from the USB serial number
+### 10. The README tells admins to read the reader id from the USB serial number (fixed for 1.0)
 
-- Where: `README.md` (machine setup). The USB serial is the upper-case MAC with no prefix
-  (`34B7DA52A084`); the reader id the firmware presents is `nfc-34b7da52a084`, matched exactly.
-- Fix: say to take the id from the reader's `info` or `net` answer (`nfcprog.py net`), or
-  normalise on the server (lower-case, add the prefix).
+- Fixed: the README says where the reader id is shown, and that the USB serial does not match.
 
 ## Low
 
@@ -129,27 +104,19 @@ in a realistic case; low = rough edge.
   comment.
 - Fix: match the pk anywhere in the path; compare the URI's host with the server's base URL.
 
-### 14. A bad base URL gives a 500
+### 14. A bad base URL gives a 500 (guarded)
 
-- Where: `ndef.py` `build_message` raises `ValueError` for a non-http(s) scheme or an overlong
-  URI; `views.py` catches only a missing base URL.
-- Fix: catch and answer 400 with the reason.
+- InvenTree's own validation refuses a base URL that is not http(s) or is too long, so this
+  cannot happen through its settings; the tag endpoint now answers 400 if it ever does.
 
-### 15. `boot` defaults to 0 when omitted
+### 15. `boot` defaults to 0 when omitted (fixed for 1.0)
 
-- Where: `sync.py` `handle_sync`. A client that omits it reuses `(0, seq)` across restarts and
-  its post-restart messages are dropped as duplicates for two days.
-- Fix: require `boot` (400 when absent).
+- Fixed: a sync without `boot` is refused with 400.
 
-### 16. Documentation that disagrees with the code
+### 16. Documentation that disagrees with the code (fixed for 1.0)
 
-- `docs/api.md` documents `poll_ms`, which `handle_sync` never returns.
-- `docs/api.md` says `last_tag` is a tap "outside a job"; `apply_message` records every `tag`
-  event.
-- `docs/api.md`'s list of 400s omits `proto != 1`.
-- `README.md` says to enable *event integration*; the plugin uses no EventMixin.
-- `README.md` says a held call occupies a web worker; with gunicorn's threads it occupies a
-  thread.
+- Fixed: `poll_ms`, `last_tag`, the 400s, the integrations list and "worker" in `docs/api.md`
+  and the README.
 
 ### 17. No automated tests of the server logic
 
@@ -158,6 +125,9 @@ in a realistic case; low = rough edge.
   automated coverage.
 - Fix: a minimal Django test suite (sync, cancel, stale marking, link) run in CI against
   SQLite, plus `makemigrations --check`.
+- `dev/check_rules.py` checks a few rules that need database state (the late-`done` window,
+  the permission re-check, the answer cap) inside the dev server, in a rolled-back
+  transaction: a start on what a test suite would cover.
 - Fleet updates added `dev/check_fleet.py` (also live-instance only). The deployment state
   machine (`fleet.py`: `_settle`, `apply_ota_message`, `check_deployments`, `auto_deploy`) is
   the first thing worth unit tests, since its timing cases (timeouts, retries, a restart mid

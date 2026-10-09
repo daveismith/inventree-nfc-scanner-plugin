@@ -94,7 +94,7 @@ The network scanners (InvenTree machines of type *NFC Scanner*), with their stat
 ```
 
 `status` is one of `online`, `busy` (a job is waiting or writing), `offline`, `unknown`,
-`error`. `last_tag` is the last tap reported outside a job, or null. A `warning` (null when
+`error`. `last_tag` is the last tap reported, or null. `reader` is the machine's *Reader ID*. A `warning` (null when
 there is none) says when two scanners are configured with the same user, since one token
 then serves both; give each scanner a user of its own.
 
@@ -108,7 +108,8 @@ Queue a job for a network scanner.
 
 `kind` is `program` (default) or `wipe`. Answers 201 with the job. 400 when the scanner is
 unknown, inactive or not initialised, not a network scanner, or (with the shared cache, where
-its status is known) offline.
+its status is known) offline. 409 with `{"scanner": "…", "job": <id>}` while the scanner has
+an unfinished job: it runs one at a time.
 
 ### `GET api/jobs/?location=<pk>&scanner=<id>` and `GET api/jobs/<id>/`
 
@@ -187,8 +188,7 @@ Response (200):
   "ack": 13,
   "cmds": [
     {"seq": 42, "cmd": "program", "id": 317, "ndef": "9101…", "pwd": "A1B2C3D4", "pack": "1234", "timeout_ms": 60000}
-  ],
-  "poll_ms": 1000
+  ]
 }
 ```
 
@@ -196,17 +196,20 @@ Response (200):
 | --- | --- |
 | `ack` | The highest message `seq` the server has stored from this call |
 | `cmds` | Commands exactly as the scanner takes them over USB, each with a `seq`, oldest first |
-| `poll_ms` | Optional: how soon to call again when idle |
+| `poll_ms` | Optional in the protocol: how soon to call again when idle. This plugin does not send it |
 
 Rules:
 
 - A command stays in `cmds` on every call until the scanner's `ack` covers its `seq`. The
-  scanner ignores a `seq` it has already acted on.
+  scanner ignores a `seq` it has already acted on. An answer carries at most two commands,
+  oldest first, which is all the scanner takes per call; the rest follow on later calls.
 - A message is applied once: a repeat of the same `(reader, boot, seq)` is acknowledged
   and ignored.
 - A `program` or `wipe` command's `id` is the job's id; the scanner's `rsp` and events
-  carry it back, and move the job's state.
-- A `tag` event outside a job is kept as the scanner's last tap.
+  carry it back, and move the job's state. Events naming a job whose command was never sent
+  to this scanner (an id that happens to match a job started over USB) are ignored.
+- A message is recorded as seen in the same transaction that applies it.
+- Every `tag` event is kept as the scanner's last tap.
 - With the *Long polling* setting on, a call with nothing to deliver is held, up to
   `wait_s` or the *Longest hold* setting (at most 60 s), whichever is less, and answered as
   soon as a command is queued. Off, every call is answered at once; a scanner should then
@@ -216,7 +219,8 @@ Rules:
 Errors: 401 for a bad token, 403 for a `reader` that no active machine is configured with
 or that is not this token's (the two are not told apart, so a token cannot be used to find
 out which reader ids exist), 400 for a malformed body (`boot`, `ack`, `wait_s` not whole
-numbers from 0 to 2^31-1, or `msgs` not a list of objects). A reader id that two active
+numbers from 0 to 2^31-1, `boot` missing, `proto` not 1, or `msgs` not a list of objects).
+A reader id that two active
 machines share is treated as unknown until that is fixed.
 
 Every value in a message is bounded and typed before it is stored: strings are cut to the
@@ -226,8 +230,10 @@ field's length, a `uid` that is not 14 hex digits is ignored, and so on. A negat
 password and PACK in a `program` or `wipe` command are removed from the plugin's record of
 the command once the scanner acknowledges it, or the job ends. Acknowledged commands and seen
 messages are deleted after two days; the numbering is kept apart and only ever goes up. A
-`done` that arrives after the job was failed as `scanner_offline` is still applied: the tag
-was written, so the record and the barcode follow.
+`done` that arrives after the job was given up on (`scanner_offline` or `no_result`) is still
+applied, since the tag was written, provided it arrives within 30 minutes and the location
+has had no newer job since; the barcode is linked only if the user who queued the job may
+still change stock locations.
 
 A scanner in the middle of a firmware update sends `rsp` to `ota` and `ota` events (`state`:
 `downloading`, `restarting` or `failed`, with `error` and `detail`); they move its deployment

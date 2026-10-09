@@ -350,10 +350,18 @@ function NfcPanel({ context }: { context: InvenTreePluginContext }) {
         setNetJob(job);
         setProgress({ stage: 'queued', text: describe(job) });
       } catch (e: any) {
+        // The server's own words (the scanner is busy, offline, updating), not its JSON.
         const data = e?.response?.data;
+        const words =
+          data && typeof data === 'object'
+            ? Object.entries(data)
+                .filter(([, v]) => typeof v === 'string' || Array.isArray(v))
+                .map(([, v]) => (Array.isArray(v) ? v.join(' ') : v))
+                .join(' ')
+            : '';
         setProgress({
           stage: 'failed',
-          text: data ? JSON.stringify(data) : e.message
+          text: words || (data ? JSON.stringify(data) : e.message)
         });
       }
     },

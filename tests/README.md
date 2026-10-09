@@ -1,14 +1,14 @@
 # Tests
 
 The plugin's test suite: pytest, against every InvenTree version the plugin supports, with no
-hardware and no network. The design and what is still to come (a headless browser with a
-simulated scanner, the firmware in the loop) are in
-[docs/test-suite-plan.md](../docs/test-suite-plan.md).
+hardware and no network. The design, and what is still to come (the firmware in the loop),
+are in [docs/test-suite-plan.md](../docs/test-suite-plan.md).
 
 | Layer | Where | Needs | Run with |
 | --- | --- | --- | --- |
 | pure | `tests/pure/` | Python and pytest | `pytest -m pure` |
 | server | `tests/server/` | Docker | `tests/run.sh` |
+| browser | `tests/browser/` | Docker | `tests/browser/run.sh` |
 
 ## Running
 
@@ -33,6 +33,56 @@ COVERAGE_FILE=test-results/coverage.dat tests/run.sh --cov --cov-report=html:tes
 
 The pure layer also runs without Docker: `pip install pytest` and `pytest -m pure`.
 
+## The browser layer
+
+```sh
+tests/browser/run.sh                          # every browser test, against the oldest supported InvenTree
+tests/browser/run.sh --version 1.5.6 -k usb   # another version; any pytest arguments
+```
+
+It starts the stack in `browser/compose.yaml`: InvenTree (its own image, with the plugin
+installed from the working tree), PostgreSQL, Redis, and a container with Playwright and
+Chromium that runs the tests. They share one Docker network declared internal: nothing is
+published on the host, and nothing can reach the internet. The stack comes up fresh for each
+run (about a minute and a half) and goes when it ends; the run itself takes two to three
+minutes.
+
+- **The browser reaches InvenTree at `localhost`.** The tests container shares the server's
+  network namespace, so the page is a secure context, as WebSerial, Web Locks and
+  `crypto.subtle` need, over plain http. (A host name is not one, and Chromium's flag to
+  treat one as secure did not take.)
+- **The scanner on USB is simulated.** `browser/webserial.js` replaces `navigator.serial`
+  before any page script runs, with one port whose streams are bridged to Python;
+  `browser/usb_scanner.py` answers as the firmware does: tags to present, errors to inject,
+  firmware updates streamed and checked, and a restart (the port unplugs and comes back).
+- **A network scanner** is `NetScanner`, calling `/sync` over HTTP with its own user's token.
+- **GitHub** is a small HTTP server in the tests container (the `github` fixture); the server
+  reaches it at `localhost` too.
+- **Data** is made through InvenTree's REST API as the admin. The stack lasts the whole run,
+  so tests make their own (named per run, deactivated after) rather than expect a clean slate.
+
+For a failed test, `test-results/browser/<test>/` holds its Playwright trace (open it with
+`playwright show-trace` or at trace.playwright.dev), a screenshot, an animated GIF of the
+test, and `serial.txt`, every line exchanged with the simulated scanner.
+`test-results/browser-stack-<version>.log` has the stack's logs.
+
+Fixtures (`browser/conftest.py`): `admin_page` (logged in as the admin), `usb` (a scanner
+the user chose before, so the page connects by itself) and `usb_new` (one to connect with the
+button), `net_scanner()`, `location`, `user_with(*roles)`, `plugin_setting(key, value)` (put
+back afterwards), `github`, and helpers: `open_panel`, `show_dashboard(page, api, *items)`
+(instead of `admin_page`), `upload_release`, `deploy`, `version()` (a release version unique to
+the run), `unplug` and `replug`.
+
+What the browser tests found about InvenTree, worked around in the fixtures:
+
+- On a server just started, and after its plugin registry reloads, a login can be accepted
+  but not hold; `log_in` tries again.
+- A dashboard widget added through the dashboard's editor is drawn one column wide until the
+  page reloads, and the editor's saving races a reload; `show_dashboard` sets the user's
+  dashboard in their profile instead.
+- With several server workers, a scanner never heard from shows "unknown" in a worker that
+  has not set it up yet, "offline" in one that has.
+
 ## What is where
 
 - `inventree-versions.json`: the versions CI tests, oldest first. The oldest is the plugin's
@@ -46,6 +96,8 @@ The pure layer also runs without Docker: `pip install pytest` and `pytest -m pur
   the plugin sees it. `server/releases.py`: made-up firmware releases, and a stand-in for
   GitHub's API.
 - `propose_versions.py`: the weekly proposal of new InvenTree versions (CI).
+- `firmware_release.py`: made-up firmware releases, for both layers.
+- `browser/`: the browser layer (above).
 
 ## Fixtures (`server/conftest.py`)
 
@@ -103,14 +155,16 @@ Each of these is commented where it is done; together they are what the spike fo
 
 ## In CI
 
-- `.github/workflows/tests.yaml`, on every push and pull request: a leg per supported version
-  on SQLite, then one job that publishes the results as the **Test results** check run (with a
-  comment on the pull request when results change), and combines the coverage. Failures are
+- `.github/workflows/tests.yaml`, on every push and pull request: a server leg (SQLite) and a
+  browser leg per supported version, then one job that publishes the results as the **Test
+  results** check run (with a comment on the pull request when results change), and combines
+  the server legs' coverage. A browser leg's **results-…-browser** artifact holds the trace,
+  screenshot, GIF and serial transcript of each failed test, and the stack's logs. Failures are
   annotated on the failing line. Each run's summary shows the coverage table; the full HTML
   report is the run's **coverage-html** artifact, and each leg's JUnit XML and coverage data
   are its **results-…** artifacts (14 days).
 - `.github/workflows/scheduled.yaml`: weekly, the same against PostgreSQL (**Test results
-  (PostgreSQL)**); nightly, against InvenTree's `latest` image, opening or updating an issue
+  (PostgreSQL)**); nightly, the server and browser layers against InvenTree's `latest` image, opening or updating an issue
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be
   started by hand from the Actions tab.
 

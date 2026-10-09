@@ -1,8 +1,22 @@
-"""Django admin: the job history and the scanner bookkeeping, read mostly."""
+"""Django admin: the job history, the scanner bookkeeping and fleet updates, read mostly.
+
+Every model is registered here. InvenTree reloads this module whenever one of the plugin's
+models is missing from the admin site (AppMixin._reregister_contrib_apps), and a reload
+re-registers the rest, which fails: a plugin registry reload then stops part way.
+tests/server/test_versions.py checks none is left out.
+"""
 
 from django.contrib import admin
 
-from .models import Job, ScannerCommand, ScannerCounter, ScannerMessage
+from .models import (
+    Deployment,
+    Firmware,
+    Job,
+    Scanner,
+    ScannerCommand,
+    ScannerCounter,
+    ScannerMessage,
+)
 
 
 @admin.register(Job)
@@ -67,3 +81,46 @@ class ScannerCounterAdmin(admin.ModelAdmin):
 
     list_display = ("machine", "last_seq")
     readonly_fields = ("machine", "last_seq")
+
+
+@admin.register(Firmware)
+class FirmwareAdmin(admin.ModelAdmin):
+    """Firmware releases held (managed from the fleet page)."""
+
+    list_display = (
+        "version",
+        "prerelease",
+        "source",
+        "proto",
+        "min_plugin",
+        "added_at",
+    )
+    list_filter = ("source", "prerelease")
+    readonly_fields = ("manifest", "app", "merged", "added_at")
+
+
+@admin.register(Scanner)
+class ScannerAdmin(admin.ModelAdmin):
+    """Every scanner seen, over the network or USB."""
+
+    list_display = ("reader_id", "fw", "last_via", "last_seen", "last_user")
+    search_fields = ("reader_id",)
+
+
+@admin.register(Deployment)
+class DeploymentAdmin(admin.ModelAdmin):
+    """Firmware updates, and their history."""
+
+    list_display = (
+        "id",
+        "scanner",
+        "firmware",
+        "state",
+        "via",
+        "attempts",
+        "requested_by",
+        "requested_at",
+        "finished_at",
+    )
+    list_filter = ("state", "via")
+    readonly_fields = ("requested_at", "updated_at")

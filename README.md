@@ -132,9 +132,9 @@ plugin_dev:
 
 ## Develop and test locally
 
-`tests/run.sh` runs the test suite in Docker against a supported InvenTree version, with no
-network; CI runs it against every supported version on each push. See
-[tests/README.md](tests/README.md).
+`tests/run.sh` runs the server tests in Docker against a supported InvenTree version, with no
+network, and `tests/browser/run.sh` the browser tests; CI runs both against every supported
+version on each push. See [tests/README.md](tests/README.md).
 
 `dev/` runs InvenTree 1.4.3 in Docker with this plugin installed from the source tree, for
 trying the plugin by hand and with a real scanner; see [dev/README.md](dev/README.md).
@@ -171,8 +171,9 @@ came before the test suite and are kept until it covers the browser too.
 
 ## Status
 
-The server side is covered by automated tests (`tests/`) against InvenTree 1.4.3 and 1.5.6,
-on SQLite on every push and on PostgreSQL weekly. The browser side is not yet.
+Covered by automated tests (`tests/`) against InvenTree 1.4.3 and 1.5.6: the server side on
+SQLite on every push and on PostgreSQL weekly, and the panel, dashboard, USB updates and fleet
+page in a headless browser, with a simulated scanner on WebSerial, on every push.
 
 Verified against InvenTree 1.4.3 (local Docker): installation from `plugins.txt`, the
 machine type and driver, every endpoint, long polling, a job carried to a real scanner by

@@ -1,7 +1,7 @@
 # Open issues
 
 What is known to be wrong or missing in this plugin, and not yet fixed. Started from a review
-on 2026-10-08 and kept up to date since (last on 2026-10-08, with the server test suite). Line
+on 2026-10-08 and kept up to date since (last on 2026-10-09, with the browser tests). Line
 numbers drift; the function names are the anchor. Several items are the server side of ones
 the firmware (`inventree_nfc_scanner`, its own `docs/open-issues.md`) lists too.
 
@@ -72,13 +72,6 @@ record.
   comment.
 - Fix: match the pk anywhere in the path; compare the URI's host with the server's base URL.
 
-### 7. The browser side has no automated tests
-
-- Where: `frontend/src/` (the panel, the dashboard item, the fleet page, the USB connection and
-  updates over WebSerial). The server suite (`tests/`) covers the API they call, not them.
-- Fix: layer 3 of `docs/test-suite-plan.md`: Playwright against the containerised stack, with
-  a simulated scanner behind WebSerial.
-
 ## Noted, not planned
 
 - The tag password is one secret handed to every user with `change_stocklocation` and to every
@@ -90,6 +83,15 @@ record.
   builds reach a bench scanner; the firmware's release workflow never publishes one.
 
 ## Fixed, for the record
+
+- **Fixed with the browser tests:** the browser side has automated tests (`tests/browser/`:
+  the panel over USB and the network, the dashboard, updates over USB, the fleet page) against
+  every supported InvenTree version. The nightly run against InvenTree's next release failed
+  because that release's API tokens are only whole as they are made (the stored key is an
+  identifier); the test fixture now takes the token then, and the server suite passes there.
+  The fleet models were missing from the Django admin, so
+  every plugin registry reload re-imported `admin.py` and stopped part way
+  (`AlreadyRegistered`); they are registered now, and a test checks every model is.
 
 - **Fixed with the server test suite:** the server logic has automated tests (`tests/`, run in
   CI against every supported InvenTree version, and weekly against PostgreSQL), including

@@ -3,10 +3,15 @@
 Tests marked `postgres` are skipped unless the run is against PostgreSQL (tests/run.sh --db).
 """
 
+import importlib.util
 import os
 from pathlib import Path
 
 import pytest
+
+# The browser layer runs in its own container (tests/browser/run.sh); elsewhere Playwright is
+# not installed and its tests are not collected.
+collect_ignore = [] if importlib.util.find_spec("playwright") else ["browser"]
 
 LAYERS = ("pure", "server", "browser", "firmware")
 HERE = Path(__file__).parent

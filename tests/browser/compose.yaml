@@ -1,0 +1,94 @@
+# The browser layer's stack (tests/browser/run.sh): InvenTree with the plugin, its database
+# and cache, and a container with Playwright and Chromium that runs the tests.
+#
+# Everything is on one network declared internal: nothing is published on the host, and
+# nothing in here can reach the internet. Only building and pulling the images, before the
+# stack starts, uses the network.
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: inventree
+      POSTGRES_PASSWORD: inventree
+      POSTGRES_DB: inventree
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-U", "inventree"]
+      interval: 2s
+      retries: 30
+    networks: [stack]
+
+  cache:
+    image: redis:7-alpine
+    networks: [stack]
+
+  inventree:
+    image: inventree/inventree:${INVENTREE_VERSION:?set INVENTREE_VERSION}
+    # The image's entrypoint (init.sh) prepares the data directory, then runs this.
+    command: ["/plugin/tests/browser/server-start.sh"]
+    volumes:
+      - ../..:/plugin
+    environment:
+      INVENTREE_DB_ENGINE: postgresql
+      INVENTREE_DB_HOST: db
+      INVENTREE_DB_PORT: "5432"
+      INVENTREE_DB_NAME: inventree
+      INVENTREE_DB_USER: inventree
+      INVENTREE_DB_PASSWORD: inventree
+      INVENTREE_CACHE_ENABLED: "True"
+      INVENTREE_CACHE_HOST: cache
+      INVENTREE_CACHE_PORT: "6379"
+      INVENTREE_SITE_URL: http://localhost:8000
+      INVENTREE_PLUGINS_ENABLED: "True"
+      # Always active, so it is loaded (with its tables and URLs) from the first start.
+      INVENTREE_PLUGINS_MANDATORY: nfcscanner
+      INVENTREE_PLUGIN_FILE: /tmp/plugins.txt
+      INVENTREE_GLOBAL_SETTINGS: >-
+        {"ENABLE_PLUGINS_URL": true, "ENABLE_PLUGINS_APP": true,
+         "ENABLE_PLUGINS_INTERFACE": true, "ENABLE_PLUGINS_SCHEDULE": true,
+         "ENABLE_PLUGINS_EVENTS": true}
+      INVENTREE_ADMIN_USER: admin
+      INVENTREE_ADMIN_PASSWORD: admin-browser-tests
+      INVENTREE_ADMIN_EMAIL: admin@example.com
+      INVENTREE_AUTO_UPDATE: "True"
+      INVENTREE_DEBUG: "False"
+      INVENTREE_LOG_LEVEL: WARNING
+      INVENTREE_WEB_ADDR: 0.0.0.0
+      INVENTREE_WEB_PORT: "8000"
+      INVENTREE_GUNICORN_WORKERS: "2"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://localhost:8000/api/"]
+      interval: 3s
+      retries: 100
+      start_period: 30s
+    networks: [stack]
+
+  tests:
+    build:
+      context: .
+      dockerfile: tests.Dockerfile
+    image: inventree-nfc-browser-tests
+    volumes:
+      - ../..:/plugin
+    working_dir: /plugin
+    environment:
+      INVENTREE_URL: http://localhost:8000
+      INVENTREE_ADMIN_USER: admin
+      INVENTREE_ADMIN_PASSWORD: admin-browser-tests
+      INVENTREE_TEST_VERSION: ${INVENTREE_VERSION}
+      GITHUB_ACTIONS: ${GITHUB_ACTIONS:-}
+    depends_on:
+      inventree:
+        condition: service_healthy
+    # In the server's network namespace, so the browser reaches InvenTree at localhost: a
+    # secure context, as WebSerial, Web Locks and crypto.subtle need, with plain http.
+    network_mode: service:inventree
+
+networks:
+  stack:
+    internal: true

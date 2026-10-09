@@ -141,7 +141,10 @@ def token_for(user) -> str:
     """A new API token for the user."""
     from users.models import ApiToken
 
-    return ApiToken.objects.create(user=user, name=f"test-{next(_counter)}").key
+    token = ApiToken.objects.create(user=user, name=f"test-{next(_counter)}")
+    # From InvenTree's next release the key is only an identifier, and the whole token is
+    # available just once, as it is made; before, the key is the token.
+    return getattr(token, "_raw_secret", None) or token.key
 
 
 @pytest.fixture

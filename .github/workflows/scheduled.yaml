@@ -2,8 +2,8 @@
 #
 # - weekly, the server suite against PostgreSQL for every supported InvenTree version, which
 #   runs the concurrency tests SQLite skips;
-# - nightly, the suite against InvenTree's next release (the `latest` image). Not blocking: a
-#   failure opens an issue, or adds to the open one;
+# - nightly, the server and browser layers against InvenTree's next release (the `latest`
+#   image). Not blocking: a failure opens an issue, or adds to the open one;
 # - weekly, a pull request adding InvenTree releases newer than the list.
 #
 # Each can be started by hand (Actions → Scheduled tests → Run workflow).
@@ -81,7 +81,7 @@ jobs:
           check-name: Test results (PostgreSQL)
 
   next:
-    name: server (InvenTree latest)
+    name: server and browser (InvenTree latest)
     if: (github.event_name == 'schedule' && github.event.schedule != '23 7 * * 1') || inputs.run == 'next'
     runs-on: ubuntu-latest
     permissions:
@@ -99,6 +99,13 @@ jobs:
           -m "pure or server"
           --junitxml=test-results/junit-latest-sqlite.xml
           -o junit_suite_name="InvenTree latest, SQLite"
+      - name: Test in a browser
+        id: browser
+        if: always()
+        run: >
+          tests/browser/run.sh --version latest
+          --junitxml=test-results/junit-latest-browser.xml
+          -o junit_suite_name="InvenTree latest, browser"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -106,7 +113,7 @@ jobs:
           path: test-results/
           retention-days: 14
       - name: Open or update the issue
-        if: failure() && steps.test.outcome == 'failure'
+        if: failure() && (steps.test.outcome == 'failure' || steps.browser.outcome == 'failure')
         env:
           GH_TOKEN: ${{ github.token }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

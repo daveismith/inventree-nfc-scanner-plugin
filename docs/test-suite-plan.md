@@ -1,6 +1,6 @@
 # Test suite: plan
 
-Status: steps 1, 2, 3 and 6 built (2026-10-08; see [Progress](#progress)); the browser and firmware layers are next. The decisions are under [Decisions](#decisions). How to run and extend what exists: [tests/README.md](../tests/README.md).
+Status: steps 1, 2, 3, 4 and 6 built (2026-10-09; see [Progress](#progress)); the firmware layer (5) and retiring the `dev/check*.py` scripts (7) are next. The decisions are under [Decisions](#decisions). How to run and extend what exists: [tests/README.md](../tests/README.md).
 
 A pytest suite for the plugin, run on GitHub's hosted runners against several InvenTree
 versions, covering the server logic, the frontend in a headless browser with a simulated
@@ -114,29 +114,33 @@ As designed; the fixtures as built, under the names tests use, are listed in
 
 ### The stack, contained
 
-A Compose file (`tests/browser/compose.yaml`) per run, all on one network declared
-`internal: true`: no port is published, and nothing on it can reach the internet.
+As built (`tests/browser/compose.yaml`, run by `tests/browser/run.sh`): one Compose project
+per run, all on one network declared `internal: true`. No port is published, and nothing on
+it can reach the internet; only pulling and building the images, before it starts, does.
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `db` | `postgres` | InvenTree's database |
-| `cache` | `redis` | the shared cache the plugin needs for scanner status |
-| `inventree` | `inventree-nfc-test:<version>`, built `FROM inventree/inventree:<version>` with the plugin installed | the server, migrated and set up by an entrypoint script |
-| `worker` | the same image | scheduled tasks |
-| `proxy` | `caddy` | static and media files, as in production |
-| `tests` | `mcr.microsoft.com/playwright/python` with the test requirements | pytest, Playwright and Chromium, the simulated scanner, and the stand-in for GitHub |
+| `db` | `postgres:17` | InvenTree's database |
+| `cache` | `redis:7-alpine` | the shared cache the plugin needs for scanner status |
+| `inventree` | `inventree/inventree:<version>`, the plugin installed from the mounted working tree at start | the server: migrated, static files collected, then gunicorn with two workers |
+| `tests` | `mcr.microsoft.com/playwright/python` with the test packages and ffmpeg | pytest, Playwright and Chromium, the simulated scanner, and the stand-in for GitHub |
 
-The only step that touches the internet is building the images, before the network exists.
-Installing the plugin into the image at build time also removes the dev setup's restart
-dance: the plugin is installed before the server first starts.
+Differences from the first design, each for a reason found on the way:
 
-Chromium reaches InvenTree at `http://inventree`. That is not a secure context, and WebSerial,
-Web Locks and `crypto.subtle` all need one. Chromium is started with
-`--unsafely-treat-insecure-origin-as-secure=http://inventree` (or `proxy`), which makes the
-origin behave as it does under https.
-
-On a developer machine, the same Compose file runs with an override that publishes the proxy
-on `127.0.0.1` only, for watching a test in a headed browser.
+- **No proxy.** InvenTree's image serves static files itself (whitenoise); firmware images
+  are served by the plugin's own view.
+- **No worker.** The tests that need a scheduled task are in the server suite.
+- **The browser reaches InvenTree at `localhost`.** The `tests` container shares the server's
+  network namespace (`network_mode: service:inventree`). `localhost` is a secure context
+  over plain http; `--unsafely-treat-insecure-origin-as-secure` did not make a host name one
+  in Playwright's Chromium. InvenTree also refuses a site URL without a dot in its host.
+- **The plugin is mandatory** (`INVENTREE_PLUGINS_MANDATORY`) and the integrations it needs
+  are set by `INVENTREE_GLOBAL_SETTINGS`, so nothing is set up through the UI or the API. Its
+  tables come from InvenTree's start-up check (`INVENTREE_AUTO_UPDATE`) in a second command
+  after the first migrate: on an empty database plugins load only once InvenTree's own tables
+  exist.
+- **No override for a developer to watch.** A failed test leaves a trace, a screenshot and a
+  GIF; `playwright show-trace` replays it step by step.
 
 ### Simulating the scanner behind WebSerial
 
@@ -356,7 +360,22 @@ the weekly run.
 - **6. Nightly and version proposal: done** (`.github/workflows/scheduled.yaml`). A pull
   request it opens does not start the tests by itself (GitHub's rule for its own token):
   close and reopen it.
-- **4, 5 and 7: not started.** `dev/check*.py` stay until the browser stack exists.
+- **Verified on GitHub (2026-10-09):** the weekly PostgreSQL legs pass on both versions (202
+  tests, the concurrency tests included); the version proposal finds nothing to add; the
+  nightly run against InvenTree `latest` failed (167 server tests) and opened its issue, as
+  designed. The cause was the tests', not the plugin's: the next release's API tokens are
+  only whole as they are made, and the fixture used the stored key. Fixed; the server suite
+  passes against `latest`.
+- **4. Browser suite: done.** 31 tests against both versions, about three minutes a version
+  with the stack's start. Every scenario above is covered except the ones marked below. The
+  WebSerial shim, `FakeScanner` (here `usb_scanner.py`) and the GIF conversion are as
+  designed; the stack differs as described under "The stack, contained". On the way it found
+  a plugin bug, now fixed: the fleet models were not in the Django admin, so every plugin
+  registry reload re-imported `admin.py` and failed part way (`AlreadyRegistered`). It also
+  found three InvenTree behaviours the fixtures work around (tests/README.md).
+  - Not covered yet: "a required-from date" and "Deploy to all" in the browser (both are
+    in the server suite), and `FakeScanner` kept honest against the firmware (step 5).
+- **5 and 7: not started.**
 
 ## Decisions
 

@@ -96,6 +96,9 @@ jobs:
           load: true
           cache-from: type=gha,scope=browser-tests
           cache-to: type=gha,mode=max,scope=browser-tests
+      - uses: ./.github/actions/pull-inventree
+        with:
+          inventree: ${{ matrix.inventree }}
       - name: Test
         run: >
           tests/browser/run.sh --version ${{ matrix.inventree }} --no-build

@@ -1,5 +1,7 @@
 name: Test image
-description: Build inventree-nfc-test:<version> (tests/Dockerfile), cached between runs.
+description: >
+  Build inventree-nfc-test:<version> (tests/Dockerfile) from InvenTree's image, pulled with
+  retries. A plain docker build, so the base is the local copy and Docker Hub is asked once.
 inputs:
   inventree:
     description: The InvenTree version (an inventree/inventree image tag)
@@ -7,16 +9,12 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - uses: ./.github/actions/pull-inventree
       with:
-        # BuildKit from Google's mirror of Docker Hub: one image less from Docker Hub.
-        driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-      with:
-        context: tests
-        file: tests/Dockerfile
-        build-args: INVENTREE_VERSION=${{ inputs.inventree }}
-        tags: inventree-nfc-test:${{ inputs.inventree }}
-        load: true
-        cache-from: type=gha,scope=inventree-${{ inputs.inventree }}
-        cache-to: type=gha,mode=max,scope=inventree-${{ inputs.inventree }}
+        inventree: ${{ inputs.inventree }}
+    - shell: bash
+      env:
+        VERSION: ${{ inputs.inventree }}
+      run: >
+        docker build --quiet -f tests/Dockerfile --build-arg "INVENTREE_VERSION=$VERSION"
+        -t "inventree-nfc-test:$VERSION" tests

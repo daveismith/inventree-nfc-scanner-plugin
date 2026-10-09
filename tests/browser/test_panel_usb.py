@@ -6,7 +6,7 @@ import pytest
 
 from playwright.sync_api import expect
 
-from .conftest import P, make_location, open_panel, unplug, usb_badge
+from .conftest import P, jobs_of, make_location, open_panel, unplug, usb_badge
 from .usb_scanner import Tag
 
 
@@ -47,7 +47,7 @@ def test_a_tag_that_is_not_blank_is_shown_and_can_be_overwritten(
     expect(page.get_by_text("Programmed", exact=True)).to_be_visible()
     assert usb.commands("program")[-1]["overwrite"] is True
     assert usb.tag.text == f"INV-SL{location['pk']}"
-    states = [j["state"] for j in api.get(f"{P}/api/jobs/?location={location['pk']}")]
+    states = [j["state"] for j in jobs_of(api, location, count=2)]
     assert states == ["done", "failed"]
 
 
@@ -83,9 +83,7 @@ def test_cancel_while_waiting(admin_page, usb, location, api):
     expect(page.get_by_text("present the tag to the scanner")).to_be_visible()
     page.get_by_role("button", name="Cancel").click()
     expect(page.get_by_text("failed: cancelled")).to_be_visible()
-    assert (
-        api.get(f"{P}/api/jobs/?location={location['pk']}")[0]["state"] == "cancelled"
-    )
+    assert jobs_of(api, location)[0]["state"] == "cancelled"
 
 
 def test_unplugged_mid_job(admin_page, usb, location, api):
@@ -96,7 +94,7 @@ def test_unplugged_mid_job(admin_page, usb, location, api):
     unplug(page)
     expect(page.get_by_text("the scanner disconnected during the job")).to_be_visible()
     expect(usb_badge(page)).to_have_text("not connected")
-    job = api.get(f"{P}/api/jobs/?location={location['pk']}")[0]
+    job = jobs_of(api, location)[0]
     assert job["state"] == "failed" and job["error"] == "no_scanner"
 
 

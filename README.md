@@ -22,7 +22,8 @@ USB scanner the next time a browser connects to it. See
 Looking a bin up needs no plugin: the desk scanner types the location's barcode into
 InvenTree's scan dialog as a keyboard.
 
-Targets InvenTree 1.4.3 (needs the machine framework and the plugin UI of 1.x).
+Needs InvenTree 1.4.3 or later (the machine framework and the plugin UI of 1.x); tested
+against 1.4.3 and 1.5.6 (`tests/inventree-versions.json`).
 
 Known gaps are listed in [docs/open-issues.md](docs/open-issues.md).
 
@@ -131,12 +132,16 @@ plugin_dev:
 
 ## Develop and test locally
 
-`dev/` runs InvenTree 1.4.3 in Docker with this plugin installed from the source tree;
-see [dev/README.md](dev/README.md). `dev/check.py` exercises the whole API against it,
-including a scanner played through `/sync`; `dev/check_fleet.py` does the same for firmware
-updates, and `dev/usb_update.py` installs one on a real USB scanner as the browser would. The
-firmware repository's
-`tools/sync_bridge.py` lets a real USB scanner stand in for a network one.
+`tests/run.sh` runs the test suite in Docker against a supported InvenTree version, with no
+network; CI runs it against every supported version on each push. See
+[tests/README.md](tests/README.md).
+
+`dev/` runs InvenTree 1.4.3 in Docker with this plugin installed from the source tree, for
+trying the plugin by hand and with a real scanner; see [dev/README.md](dev/README.md).
+`dev/usb_update.py` installs an update on a real USB scanner as the browser would, and the
+firmware repository's `tools/sync_bridge.py` lets a real USB scanner stand in for a network
+one. `dev/check.py` and `dev/check_fleet.py`, which exercise the API against that instance,
+came before the test suite and are kept until it covers the browser too.
 
 ## How it works
 
@@ -165,6 +170,9 @@ firmware repository's
   marks scanners offline when they stop calling.
 
 ## Status
+
+The server side is covered by automated tests (`tests/`) against InvenTree 1.4.3 and 1.5.6,
+on SQLite on every push and on PostgreSQL weekly. The browser side is not yet.
 
 Verified against InvenTree 1.4.3 (local Docker): installation from `plugins.txt`, the
 machine type and driver, every endpoint, long polling, a job carried to a real scanner by

@@ -43,7 +43,6 @@ exclude = [
     ".git",
     "__pycache__",
     "test.py",
-    "tests",
     "venv",
     "env",
     ".venv",
@@ -59,3 +58,35 @@ ignore = [
     "PIE790",
     "RUF012"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p tests.inventree_setup --strict-markers -ra"
+markers = [
+    "pure: no InvenTree needed",
+    "server: needs InvenTree, runs in process (pytest-django)",
+    "postgres: needs PostgreSQL's row locks; skipped on SQLite",
+    "browser: Playwright against the containerised stack",
+    "firmware: the firmware's simulator in the loop",
+]
+filterwarnings = [
+    # InvenTree's, not ours
+    "ignore:The django-stdimage is deprecated:DeprecationWarning",
+    "ignore:Accessing the database during app initialization:RuntimeWarning",
+    "ignore:A plugin registry reload was triggered:UserWarning",
+    "ignore:DateTimeField NotificationEntry.updated received a naive datetime:RuntimeWarning",
+]
+
+[tool.coverage.run]
+source = ["inventree_nfc_scanner"]
+omit = ["*/migrations/*"]
+branch = true
+relative_files = true
+
+[tool.coverage.paths]
+# Measured in the test container, where the working tree is /plugin.
+source = ["inventree_nfc_scanner/", "/plugin/inventree_nfc_scanner/"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

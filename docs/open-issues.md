@@ -1,7 +1,7 @@
 # Open issues
 
 What is known to be wrong or missing in this plugin, and not yet fixed. Started from a review
-on 2026-10-08 and kept up to date since (last on 2026-10-08, with the fixes before 1.0). Line
+on 2026-10-08 and kept up to date since (last on 2026-10-08, with the server test suite). Line
 numbers drift; the function names are the anchor. Several items are the server side of ones
 the firmware (`inventree_nfc_scanner`, its own `docs/open-issues.md`) lists too.
 
@@ -31,27 +31,7 @@ record.
 - Fix: bind the proxy to `127.0.0.1` by default and make LAN exposure (needed for a real reader)
   an explicit opt-in, documented with its risk.
 
-### 3. No automated tests of the server logic
-
-
-- `dev/check.py` needs a live instance and is not run in CI; there is no Django test suite and
-  no `makemigrations --check`. The locking, the counter, retirement and the stale task have no
-  automated coverage.
-- Fix: a minimal Django test suite (sync, cancel, stale marking, link) run in CI against
-  SQLite, plus `makemigrations --check`.
-- `dev/check_rules.py` checks a few rules that need database state (the late-`done` window,
-  the permission re-check, the answer cap) inside the dev server, in a rolled-back
-  transaction: a start on what a test suite would cover.
-- Fleet updates added `dev/check_fleet.py` (also live-instance only). The deployment state
-  machine (`fleet.py`: `_settle`, `apply_ota_message`, `check_deployments`, `auto_deploy`) is
-  the first thing worth unit tests, since its timing cases (timeouts, retries, a restart mid
-  download) are slow to reach live.
-- Caveat for `makemigrations --check`: InvenTree's default id type differs from the one
-  migrations 0001 and 0003 use (`BigAutoField`), so `makemigrations` proposes altering the
-  existing ids. Set the ids explicitly on the models (or find where InvenTree's app config for
-  plugins takes `default_auto_field`) before adding the check.
-
-### 4. Whether a firmware release really works with its `min_plugin` is not tested
+### 3. Whether a firmware release really works with its `min_plugin` is not tested
 
 
 - Where: the firmware's `tools/make_release.py` sets `MIN_PLUGIN` by hand; this plugin trusts
@@ -64,7 +44,7 @@ record.
 
 ## Low
 
-### 5. A cancelled job the scanner no longer has waits for the timeout
+### 4. A cancelled job the scanner no longer has waits for the timeout
 
 - Where: `sync.py` `apply_message` (a refused `cancel` never ends a job), `views.py`
   `JobCancelView`; `sync.expire_jobs`.
@@ -75,14 +55,7 @@ record.
 - Fix: end the job when its `cancel` is answered `no_job` (and have the firmware answer such a
   cancel `ok`: its list, item 4); fail the queued jobs of a deactivated scanner.
 
-### 6. Two concurrent links of one UID can both succeed
-
-
-- Where: `barcodes.py` `link_uid`: holders are read and then the assignment made with no lock;
-  InvenTree's `barcode_hash` has no unique constraint.
-- Fix: take a lock (e.g. on the location row and a per-hash advisory lock) around the move.
-
-### 7. Holder names reach view-only users
+### 5. Holder names reach view-only users
 
 
 - Where: `sync.py` `_link_barcode` stores "barcode moved from <object>" in `Job.error_detail`,
@@ -90,7 +63,7 @@ record.
   history renders.
 - Fix: store the kind only, or keep the names in the server log alone.
 
-### 8. Tapping the current bin's tag leaves its NFC panel
+### 6. Tapping the current bin's tag leaves its NFC panel
 
 
 - Where: `scanner.ts` `goToTaggedLocation` matches `/stock/location/<pk>$`; InvenTree's route
@@ -99,15 +72,12 @@ record.
   comment.
 - Fix: match the pk anywhere in the path; compare the URI's host with the server's base URL.
 
-### 9. Automatic deployment cannot be checked in isolation on a live instance
+### 7. The browser side has no automated tests
 
-
-- Where: `dev/check_fleet.py --auto-deploy`. Automatic deployment goes to every scanner older
-  than the release, so on a server with real scanners the check gives them a deployment too;
-  it withdraws them at once and checks none got past pending, but a scanner calling in during
-  that second would be sent the stand-in release (which it refuses: not an image).
-- Fix: cover `auto_deploy` with unit tests (see 3) and drop the live variant, or limit
-  automatic deployment by a scanner group or machine setting.
+- Where: `frontend/src/` (the panel, the dashboard item, the fleet page, the USB connection and
+  updates over WebSerial). The server suite (`tests/`) covers the API they call, not them.
+- Fix: layer 3 of `docs/test-suite-plan.md`: Playwright against the containerised stack, with
+  a simulated scanner behind WebSerial.
 
 ## Noted, not planned
 
@@ -115,7 +85,18 @@ record.
   scanner token. Operators should treat that permission as "may unlock every tag"; it is
   documented in `docs/api.md`.
 
+- A release whose manifest says `"dev": true` (a development build from the firmware's
+  `tools/make_release.py --dev`) is accepted, uploaded or fetched. That is how development
+  builds reach a bench scanner; the firmware's release workflow never publishes one.
+
 ## Fixed, for the record
+
+- **Fixed with the server test suite:** the server logic has automated tests (`tests/`, run in
+  CI against every supported InvenTree version, and weekly against PostgreSQL), including
+  `makemigrations --check` (the models now declare their `BigAutoField` ids) and automatic
+  deployment in isolation, which the live `dev/check_fleet.py --auto-deploy` could not do
+  safely. Concurrent links of one UID could leave it the barcode of several bins (eight of
+  eight, in the PostgreSQL test); they now take turns under a per-UID lock.
 
 - **Fixed before 1.0:** answers carry at most two commands; one job at a time per scanner
   (409); events for a job never sent to that scanner are ignored, and a late `done` is believed

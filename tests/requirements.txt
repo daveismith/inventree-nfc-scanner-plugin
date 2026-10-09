@@ -1,0 +1,8 @@
+# The test suite's own packages. pytest and pytest-django match InvenTree's requirements-dev.
+pytest==9.1.1
+pytest-django==4.12.0
+pytest-cov==7.1.0
+coverage==7.16.2
+pytest-github-actions-annotate-failures==0.4.2
+responses==0.26.3
+time-machine==3.5.1

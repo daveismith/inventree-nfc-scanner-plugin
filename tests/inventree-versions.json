@@ -1,0 +1,4 @@
+{
+  "comment": "The InvenTree versions the plugin is tested against, oldest first. The oldest is the plugin's MIN_VERSION (tests/server/test_versions.py checks they agree).",
+  "supported": ["1.4.3", "1.5.6"]
+}

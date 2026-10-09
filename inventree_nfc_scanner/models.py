@@ -12,6 +12,12 @@ class Job(models.Model):
     done by the browser over USB, and is recorded here only so the history is complete.
     """
 
+    # Declared, as the migrations have it, rather than left to DEFAULT_AUTO_FIELD, which
+    # InvenTree sets to AutoField (so makemigrations would want to change it).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
+
     class Meta:
         """Meta options."""
 
@@ -91,6 +97,11 @@ class Job(models.Model):
 class ScannerCommand(models.Model):
     """A command queued for a network scanner, kept until the scanner acknowledges it."""
 
+    # As the migrations have it (see Job.id).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
+
     class Meta:
         """Meta options."""
 
@@ -120,6 +131,11 @@ class ScannerMessage(models.Model):
 
     Only the identity is kept; the content was applied when it first arrived.
     """
+
+    # As the migrations have it (see Job.id).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
 
     class Meta:
         """Meta options."""
@@ -173,6 +189,11 @@ class Firmware(models.Model):
     repository); the fields beside it are the parts of it the plugin decides with.
     """
 
+    # As the migrations have it (see Job.id).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
+
     class Meta:
         """Meta options."""
 
@@ -223,6 +244,11 @@ class Scanner(models.Model):
     """Every scanner the server has heard of, over the network or through a browser over USB,
     by the id it reports (`nfc-` and its MAC address)."""
 
+    # As the migrations have it (see Job.id).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
+
     class Meta:
         """Meta options."""
 
@@ -256,6 +282,11 @@ class Scanner(models.Model):
 class Deployment(models.Model):
     """One scanner told to run one firmware. A network scanner gets it on its next call; a
     USB scanner when a browser next connects to it."""
+
+    # As the migrations have it (see Job.id).
+    id = models.BigAutoField(
+        auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
+    )
 
     class Meta:
         """Meta options."""

@@ -41,3 +41,16 @@ def test_the_migrations_match_the_models(db):
         stdout=out,
         stderr=out,
     )
+
+
+def test_every_model_is_in_the_admin():
+    """InvenTree reloads admin.py when one is missing, and the reload fails on the others."""
+    from django.apps import apps
+    from django.contrib import admin
+
+    missing = [
+        m.__name__
+        for m in apps.get_app_config("inventree_nfc_scanner").get_models()
+        if not admin.site.is_registered(m)
+    ]
+    assert missing == []

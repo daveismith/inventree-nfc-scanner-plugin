@@ -169,10 +169,12 @@ Each of these is commented where it is done; together they are what the spike fo
   when it fails; weekly, a pull request when InvenTree releases a new minor. Any of them can be
   started by hand from the Actions tab.
 
-CI logs in to Docker Hub with the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
-(a read-only access token): anonymous pulls are limited to about 10 an hour per IP address,
-which GitHub's runners share, and fail with 429 Too Many Requests. Without the secrets (a pull
-request from a fork) it pulls anonymously. PostgreSQL and Redis come from Google's mirror,
+CI logs in to Docker Hub with the repository variable `DOCKERHUB_USERNAME` and the secret
+`DOCKERHUB_TOKEN` (a read-only access token; nothing is pushed): anonymous pulls are limited to
+about 10 an hour per IP address, which GitHub's runners share, and fail with 429 Too Many
+Requests. Without them (a pull request from a fork gets no secrets), or if the login fails, it
+pulls anonymously. The username is a variable rather than a secret because a secret is masked
+wherever it appears in the logs. PostgreSQL and Redis come from Google's mirror,
 `mirror.gcr.io`, which does not carry InvenTree's image.
 
 ## Adding an InvenTree version

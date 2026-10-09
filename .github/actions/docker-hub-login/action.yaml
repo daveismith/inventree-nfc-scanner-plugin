@@ -2,10 +2,15 @@ name: Docker Hub login
 description: >
   Log in to Docker Hub, so image pulls count against the account's allowance rather than the
   anonymous one (about 10 an hour per IP address, which GitHub's runners share). Skipped when
-  no token is given: a pull request from a fork gets no secrets, and pulls anonymously.
+  no username or token is given (a pull request from a fork gets no secrets), and a login
+  that fails (Docker Hub's sign-in is down now and then) does not fail the job: either way it
+  pulls anonymously.
 inputs:
   username:
-    description: The DOCKERHUB_USERNAME secret
+    description: >
+      The DOCKERHUB_USERNAME repository variable. A variable, not a secret: a secret's value
+      is masked wherever it appears in the logs, and a username that is also the GitHub
+      account's would hide the repository's own name.
     required: false
   token:
     description: The DOCKERHUB_TOKEN secret (a read-only access token)
@@ -13,7 +18,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - if: inputs.token != ''
+    - if: inputs.username != '' && inputs.token != ''
+      continue-on-error: true
       uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
       with:
         username: ${{ inputs.username }}

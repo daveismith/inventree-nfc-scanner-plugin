@@ -62,6 +62,10 @@ def link_uid(location, uid, actor) -> str:
     uid = clean_uid(uid)
     if actor is None or not getattr(actor, "is_active", False):
         raise NotPermitted("no active user to link on behalf of")
+    # Checked now, not only when the job was queued: a network job is linked when its `done`
+    # arrives, on behalf of whoever queued it, who may have lost the permission since.
+    if not actor.has_perm("stock.change_stocklocation"):
+        raise NotPermitted(f"{actor} may no longer change stock locations")
     barcode_hash = hash_barcode(uid)
     if location.barcode_hash == barcode_hash:
         return "already linked"

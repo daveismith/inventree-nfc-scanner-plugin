@@ -67,6 +67,16 @@ class CanSeeScanners(permissions.BasePermission):
         )
 
 
+def _ndef_hex(pk: int) -> str:
+    """The tag's message; a base URL it cannot be built from is the admin's to fix (400)."""
+    try:
+        return ndef.build_message(base_url(), pk).hex().upper()
+    except ValueError as exc:
+        raise ValidationError({
+            "base_url": f'The "Base URL" setting cannot go on a tag: {exc}'
+        })
+
+
 def tag_payload(location: StockLocation) -> dict:
     """What a `program` job for this location carries."""
     plg = plugin()
@@ -74,7 +84,7 @@ def tag_payload(location: StockLocation) -> dict:
         "location": location.pk,
         "text": ndef.location_text(location.pk),
         "uri": ndef.location_uri(base_url(), location.pk),
-        "ndef": ndef.build_message(base_url(), location.pk).hex().upper(),
+        "ndef": _ndef_hex(location.pk),
         "timeout_s": int(plg.get_setting("JOB_TIMEOUT_S") or 60),
     }
     pwd = (plg.get_setting("TAG_PASSWORD") or "").strip().upper()
@@ -256,6 +266,22 @@ class JobListView(APIView):
             raise ValidationError({
                 "scanner": "That scanner is offline; a job for it would only wait."
             })
+
+        # One job at a time: the reader runs one, and refuses (busy) any other it is sent.
+        unfinished = (
+            Job.objects.filter(machine=machine.machine_config)
+            .exclude(state__in=Job.FINISHED)
+            .first()
+        )
+        if unfinished is not None:
+            return Response(
+                {
+                    "scanner": f"That scanner is busy with another job (#{unfinished.pk}, "
+                    f"{unfinished.get_state_display().lower()}); try again when it is done.",
+                    "job": unfinished.pk,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         from .models import Deployment
 

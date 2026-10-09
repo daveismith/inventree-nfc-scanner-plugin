@@ -560,6 +560,70 @@ def run(api, admin, scanner, machine, loc):
         (st, body),
     )
 
+    # --- one job at a time per scanner; events for a job never sent are not believed
+    st, a = api.call(
+        "POST",
+        f"{P}/api/jobs/",
+        token=admin,
+        body={"location": loc, "scanner": machine},
+    )
+    st2, b = api.call(
+        "POST",
+        f"{P}/api/jobs/",
+        token=admin,
+        body={"location": loc, "scanner": machine},
+    )
+    check(
+        st == 201 and st2 == 409 and b.get("job") == a["id"],
+        "a second job for a scanner busy with one is refused (409), naming the first",
+        (st, st2, b),
+    )
+    boot2 = boot + 500
+    st, body = sync({
+        "boot": boot2,
+        "ack": 0,
+        "msgs": [
+            {
+                "seq": 1,
+                "evt": "done",
+                "id": a["id"],
+                "uid": "04AABBCCDDEE01",
+                "type": "ntag215",
+            }
+        ],
+    })
+    st, j = api.call("GET", f"{P}/api/jobs/{a['id']}/", token=admin)
+    check(
+        j["state"] == "sent" and j["uid"] == "",
+        "a done for a job not yet sent to the scanner (a USB job with the same id) is ignored",
+        j,
+    )
+    prog = next(c for c in body["cmds"] if c.get("id") == a["id"])
+    st, body = sync({
+        "boot": boot2,
+        "ack": prog["seq"],
+        "msgs": [
+            {"seq": 2, "rsp": "program", "ok": True, "id": a["id"]},
+            {"seq": 3, "evt": "failed", "id": a["id"], "error": "cancelled"},
+        ],
+    })
+    st, j = api.call("GET", f"{P}/api/jobs/{a['id']}/", token=admin)
+    check(
+        j["state"] == "cancelled",
+        "once sent, the job's own events are applied",
+        j["state"],
+    )
+
+    st, body = api.call(
+        "POST",
+        f"{P}/sync/",
+        token=scanner,
+        body={"reader": READER, "proto": 1, "ack": 0, "msgs": []},
+    )
+    check(
+        st == 400 and "boot" in str(body), "a sync without boot is refused", (st, body)
+    )
+
     # --- the USB route's record
     st, j = api.call(
         "POST",

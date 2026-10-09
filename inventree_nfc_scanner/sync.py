@@ -35,6 +35,15 @@ PROTO_VERSION = 1
 RESULT_GRACE_S = (
     120  # after a job's own timeout, how long its result may take to arrive
 )
+# How many commands one answer carries. The reader takes two per call, and its answer buffer
+# is 8 KB: an answer with every pending command could outgrow it and stall the link.
+MAX_CMDS_PER_ANSWER = 2
+# How long after a job was failed for want of news a `done` for it is still believed: long
+# enough for a reader that was off the network for a while, short enough that an old message
+# cannot pull a tag's UID back to a bin it has since left.
+LATE_DONE_WINDOW = datetime.timedelta(minutes=30)
+# The failures that mean "we stopped waiting", after which the tag may still have been written.
+GAVE_UP = ("scanner_offline", "no_result")
 UNFINISHED = ("queued", "sent", "waiting", "writing")
 TAKEN = ("sent", "waiting", "writing")  # the scanner has (or may have) the job
 POLL_STEP_S = 0.25
@@ -146,6 +155,25 @@ def _link_barcode(job: Job) -> None:
         job.save()
 
 
+def _was_sent(job: Job) -> bool:
+    """Whether this job's program or wipe command went to its scanner."""
+    return ScannerCommand.objects.filter(
+        job=job, payload__cmd__in=["program", "wipe"], sent_at__isnull=False
+    ).exists()
+
+
+def _late_done_believed(job: Job) -> bool:
+    """A `done` for a job already given up on: believed only soon after, and only if the
+    location has had no newer job (whose tag would be the one that counts)."""
+    if job.state != Job.State.FAILED or job.error not in GAVE_UP:
+        return False
+    if job.finished_at is None or timezone.now() - job.finished_at > LATE_DONE_WINDOW:
+        return False
+    return not Job.objects.filter(
+        location=job.location, created_at__gt=job.created_at
+    ).exists()
+
+
 def apply_message(machine: NfcScannerMachine, msg: dict, scanner=None) -> None:
     """Act on one message from the scanner."""
     if msg.get("rsp") == "ota" or msg.get("evt") == "ota":
@@ -160,6 +188,10 @@ def apply_message(machine: NfcScannerMachine, msg: dict, scanner=None) -> None:
     job = None
     if job_id is not None:
         job = Job.objects.filter(pk=job_id, machine=machine.machine_config).first()
+    if job is not None and not _was_sent(job):
+        # Not a job this server gave the scanner: an id that happens to match, from a job
+        # started over USB, say. Its events are none of this job's business.
+        job = None
 
     if "rsp" in msg:
         # The answer to a command. Only a refused `program` or `wipe` ends its job; a refused
@@ -195,13 +227,9 @@ def apply_message(machine: NfcScannerMachine, msg: dict, scanner=None) -> None:
         return
     if job.finished:
         # One case is worth hearing late: the scanner wrote the tag after a lapse long enough
-        # for the job to have been failed as scanner_offline. The tag is what it is now; the
-        # record and the barcode follow.
-        if not (
-            evt == "done"
-            and job.state == Job.State.FAILED
-            and job.error == "scanner_offline"
-        ):
+        # for the job to have been given up on. The tag is what it is now; the record and the
+        # barcode follow, if the news is recent and nothing has been done to the bin since.
+        if not (evt == "done" and _late_done_believed(job)):
             return
 
     if evt == "waiting":
@@ -257,7 +285,11 @@ def handle_sync(
     """Process one /sync call and build its answer. Raises ValidationError for a body that is
     not what a scanner sends."""
     config = machine.machine_config
-    boot = _seq(body.get("boot", 0))
+    if "boot" not in body:
+        # Without it, a client's messages after a restart would repeat (0, seq) pairs already
+        # seen, and be dropped as duplicates.
+        raise ValidationError({"boot": "required"})
+    boot = _seq(body.get("boot"))
     ack = _seq(body.get("ack", 0))
     wait = _seq(body.get("wait_s", 0) or 0)
     msgs = body.get("msgs") or []
@@ -304,16 +336,22 @@ def handle_sync(
         if seq is None:
             continue
         highest = max(highest, seq)
-        _, fresh = ScannerMessage.objects.get_or_create(
-            machine=config, boot=boot, seq=seq
-        )
-        if fresh:
-            try:
-                apply_message(machine, msg, scanner)
-            except Exception:  # one bad message must not stall the exchange
-                logger.exception(
-                    "NFC scanner %s: message %s not applied", config.pk, msg
-                )
+        # Recorded as seen in the same transaction that applies it: if the process dies
+        # between the two, neither happened, and the scanner's resend is applied. A message
+        # that fails to apply (a bug, not a crash) is still recorded, in a savepoint of its
+        # own, so that one bad message cannot stall the exchange for ever.
+        with transaction.atomic():
+            _, fresh = ScannerMessage.objects.get_or_create(
+                machine=config, boot=boot, seq=seq
+            )
+            if fresh:
+                try:
+                    with transaction.atomic():
+                        apply_message(machine, msg, scanner)
+                except Exception:
+                    logger.exception(
+                        "NFC scanner %s: message %s not applied", config.pk, msg
+                    )
 
     # 3. Hand out what is waiting; hold the call for more if asked and allowed. A firmware
     # update waiting for this scanner is started here, when it is free for one.
@@ -326,7 +364,7 @@ def handle_sync(
                 logger.exception(
                     "NFC scanner %s: could not start its update", config.pk
                 )
-        commands = list(pending_commands(config))
+        commands = list(pending_commands(config)[:MAX_CMDS_PER_ANSWER])
         if commands or time.monotonic() >= deadline:
             break
         time.sleep(POLL_STEP_S)

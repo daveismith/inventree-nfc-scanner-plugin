@@ -72,13 +72,6 @@ record.
   comment.
 - Fix: match the pk anywhere in the path; compare the URI's host with the server's base URL.
 
-### 7. Not yet tested against InvenTree's next release
-
-- Where: the nightly run against `inventree/inventree:latest` (`.github/workflows/scheduled.yaml`)
-  fails: most server tests get an HTML answer where the API should answer JSON. Followed in
-  the GitHub issue that run opened ("Tests fail against InvenTree's next release").
-- Matters when InvenTree releases its next minor; the supported versions pass.
-
 ## Noted, not planned
 
 - The tag password is one secret handed to every user with `change_stocklocation` and to every
@@ -93,7 +86,10 @@ record.
 
 - **Fixed with the browser tests:** the browser side has automated tests (`tests/browser/`:
   the panel over USB and the network, the dashboard, updates over USB, the fleet page) against
-  every supported InvenTree version. The fleet models were missing from the Django admin, so
+  every supported InvenTree version. The nightly run against InvenTree's next release failed
+  because that release's API tokens are only whole as they are made (the stored key is an
+  identifier); the test fixture now takes the token then, and the server suite passes there.
+  The fleet models were missing from the Django admin, so
   every plugin registry reload re-imported `admin.py` and stopped part way
   (`AlreadyRegistered`); they are registered now, and a test checks every model is.
 

@@ -362,9 +362,10 @@ the weekly run.
   close and reopen it.
 - **Verified on GitHub (2026-10-09):** the weekly PostgreSQL legs pass on both versions (202
   tests, the concurrency tests included); the version proposal finds nothing to add; the
-  nightly run against InvenTree `latest` fails (167 server tests), and opened its issue as
-  designed. That failure is InvenTree's next release changing under the plugin, and is
-  followed up in that issue.
+  nightly run against InvenTree `latest` failed (167 server tests) and opened its issue, as
+  designed. The cause was the tests', not the plugin's: the next release's API tokens are
+  only whole as they are made, and the fixture used the stored key. Fixed; the server suite
+  passes against `latest`.
 - **4. Browser suite: done.** 31 tests against both versions, about three minutes a version
   with the stack's start. Every scenario above is covered except the ones marked below. The
   WebSerial shim, `FakeScanner` (here `usb_scanner.py`) and the GIF conversion are as

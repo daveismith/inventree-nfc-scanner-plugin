@@ -11,7 +11,7 @@ import itertools
 
 import pytest
 
-from .scanner import SLUG, FakeScanner
+from .scanner import P, SLUG, FakeScanner
 
 BASE_URL = "https://inv.example.com"
 HOST = "inventree.test"
@@ -26,11 +26,49 @@ def django_db_setup(django_db_setup, django_db_blocker):
         from common.models import InvenTreeSetting
         from plugin import registry
 
+        # Under test InvenTree also loads its ~40 sample and testing plugins, and recomputes a
+        # hash over every plugin on each machine change; without them a test runs several
+        # times faster. What is left is what production loads: the built-ins and this plugin.
+        registry.plugin_dirs = lambda: ["plugin.builtin"]
         registry.reload_plugins(full_reload=True, force_reload=True, collect=True)
         registry.set_plugin_state(SLUG, True)
         assert registry.get_plugin(SLUG), "the plugin did not load"
         InvenTreeSetting.build_default_values()
         InvenTreeSetting.set_setting("INVENTREE_BASE_URL", BASE_URL, None)
+
+        from machine import registry as machines
+
+        machines.initialize(main=True)
+
+        # A transactional test (tests/server/test_concurrency.py) empties the database after it
+        # and restores what was serialised when the test database was made: before the above.
+        # Serialised again, so the plugin's registration and settings come back too.
+        from django.db import connection
+
+        if connection.vendor == "postgresql":
+            connection._test_serialized_contents = (
+                connection.creation.serialize_db_to_string()
+            )
+        # The hash tells other server processes to reload their machines; a test run is one
+        # process, and recomputing it on every machine change costs a second a test. Checking
+        # it goes too: a reload empties the registry first, which threads of one process (the
+        # concurrency tests; InvenTree serves a request per process) would see half done.
+        machines._update_registry_hash = lambda *a, **k: None
+        machines._check_reload = lambda *a, **k: None
+
+
+@pytest.fixture(autouse=True)
+def fresh_cache():
+    """Machine state and the last release check live in the cache, keyed by ids the rolled
+    back database hands out again: each test starts with it empty."""
+    from django.contrib.contenttypes.models import ContentType
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()
+    # Emptied and refilled by a transactional test, the content types may have new ids.
+    ContentType.objects.clear_cache()
 
 
 @pytest.fixture
@@ -59,7 +97,9 @@ def _user(name, *, superuser=False, roles=()):
     from django.contrib.auth.models import Group, User
 
     user = User.objects.create_user(
-        username=f"{name}-{next(_counter)}", password="x", is_superuser=superuser,
+        username=f"{name}-{next(_counter)}",
+        password="x",
+        is_superuser=superuser,
         is_staff=superuser,
     )
     if roles:
@@ -110,7 +150,7 @@ def api():
     from rest_framework.test import APIClient
 
     def make(user=None, token=None):
-        client = APIClient(SERVER_NAME=HOST)
+        client = APIClient(SERVER_NAME=HOST, HTTP_ACCEPT="application/json")
         if user is not None:
             token = token or token_for(user)
         if token:
@@ -141,20 +181,16 @@ def tag_uid():
     return lambda: f"04{next(_counter):012X}"
 
 
-def reload_machines():
-    from machine import registry
-
-    registry.initialize(main=True)
-
-
 @pytest.fixture
 def machines(db):
-    """The machine registry, reloaded from this test's database before and after it."""
+    """The machine registry (loaded once for the session); the machines a test adds to it are
+    taken out again afterwards, since the database forgets them."""
     from machine import registry
 
-    reload_machines()
+    before = set(registry.machines)
     yield registry
-    reload_machines()
+    for pk in set(registry.machines) - before:
+        del registry.machines[pk]
 
 
 @pytest.fixture
@@ -169,7 +205,10 @@ def network_scanner(machines, nobody):
             driver="nfc-network",
             active=active,
         )
-        reload_machines()
+        if (
+            machines.get_machine(config.pk) is None
+        ):  # saving it may have added it already
+            machines.add_machine(config, initialize=True, update_registry_hash=False)
         machine = machines.get_machine(config.pk)
         machine.set_setting("READER_ID", "D", reader or f"nfc-{next(_counter):012x}")
         machine.set_setting("USER", "D", str((user or nobody).pk))
@@ -182,4 +221,69 @@ def network_scanner(machines, nobody):
 def scanner(network_scanner, api, nobody):
     """A network scanner and its machine (`scanner.machine`), calling with its user's token."""
     machine = network_scanner(user=nobody)
-    return FakeScanner(api(nobody), reader=machine.get_setting("READER_ID", "D"), machine=machine)
+    return FakeScanner(
+        api(nobody), reader=machine.get_setting("READER_ID", "D"), machine=machine
+    )
+
+
+@pytest.fixture
+def job_for(api, clerk, location):
+    """`job_for(scanner, **fields)`: queue a job through the API, as the panel does."""
+
+    def make(scanner, **fields):
+        r = api(clerk).post(
+            f"{P}/api/jobs/",
+            {"location": location.pk, "scanner": str(scanner.machine.pk), **fields},
+            format="json",
+        )
+        assert r.status_code == 201, r.json()
+        return r.json()
+
+    return make
+
+
+# Firmware ---------------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def media(settings, tmp_path):
+    """Uploaded and fetched images go to a directory of the test's own."""
+    settings.MEDIA_ROOT = str(tmp_path / "media")
+    return tmp_path / "media"
+
+
+@pytest.fixture
+def fleet(api, admin_user):
+    """An API client for the fleet pages, as an admin."""
+    return api(admin_user)
+
+
+@pytest.fixture
+def github(set_setting):
+    """A stand-in for GitHub's API, set as the plugin's: `github.publish(release(...))`."""
+    import responses
+
+    from .releases import FakeGitHub
+
+    set_setting("FIRMWARE_REPO", FakeGitHub.REPO)
+    set_setting("FIRMWARE_API", FakeGitHub.API)
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as mock:
+        yield FakeGitHub(mock)
+
+
+@pytest.fixture
+def notifications(monkeypatch):
+    """InvenTree's notifications, recorded rather than sent: a list of (category, targets, context)."""
+    import common.notifications
+
+    sent = []
+    monkeypatch.setattr(
+        common.notifications,
+        "trigger_notification",
+        lambda obj, category, targets=None, context=None, **kw: sent.append((
+            category,
+            targets,
+            context,
+        )),
+    )
+    return sent

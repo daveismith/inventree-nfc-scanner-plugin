@@ -30,19 +30,28 @@ class FakeScanner:
                 self.seq += 1
                 m = {"seq": self.seq, **m}
             numbered.append(m)
-        payload = raw if raw is not None else {
-            "reader": self.reader,
-            "boot": self.boot,
-            "proto": 1,
-            "ack": self.acked,
-            "wait_s": wait_s,
-            "msgs": numbered,
-            **({"fw": self.fw} if self.fw else {}),
-            **body,
-        }
+        payload = (
+            raw
+            if raw is not None
+            else {
+                "reader": self.reader,
+                "boot": self.boot,
+                "proto": 1,
+                "ack": self.acked,
+                "wait_s": wait_s,
+                "msgs": numbered,
+                **({"fw": self.fw} if self.fw else {}),
+                **body,
+            }
+        )
         r = self.client.post(f"{P}/sync/", payload, format="json")
-        data = r.json() if r.content else None
-        self.last = data or {}
+        json_ = "json" in (r.get("Content-Type") or "")
+        data = (
+            r.json()
+            if r.content and json_
+            else (r.content.decode(errors="replace") or None)
+        )
+        self.last = data if isinstance(data, dict) else {}
         return r.status_code, data
 
     def cmds(self, *msgs, **body):

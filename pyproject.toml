@@ -43,7 +43,6 @@ exclude = [
     ".git",
     "__pycache__",
     "test.py",
-    "tests",
     "venv",
     "env",
     ".venv",
@@ -75,4 +74,19 @@ filterwarnings = [
     "ignore:The django-stdimage is deprecated:DeprecationWarning",
     "ignore:Accessing the database during app initialization:RuntimeWarning",
     "ignore:A plugin registry reload was triggered:UserWarning",
+    "ignore:DateTimeField NotificationEntry.updated received a naive datetime:RuntimeWarning",
 ]
+
+[tool.coverage.run]
+source = ["inventree_nfc_scanner"]
+omit = ["*/migrations/*"]
+branch = true
+relative_files = true
+
+[tool.coverage.paths]
+# Measured in the test container, where the working tree is /plugin.
+source = ["inventree_nfc_scanner/", "/plugin/inventree_nfc_scanner/"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

@@ -25,7 +25,6 @@ ENV INVENTREE_DB_ENGINE=sqlite3 \
     INVENTREE_AUTO_UPDATE=False \
     INVENTREE_CONSOLE_LOG=False \
     INVENTREE_LOG_LEVEL=WARNING \
-    INVENTREE_SITE_URL=http://inventree.test \
     DJANGO_SETTINGS_MODULE=InvenTree.settings \
     PYTHONPATH=/home/inventree/src/backend/InvenTree
 

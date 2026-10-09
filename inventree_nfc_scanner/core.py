@@ -59,7 +59,7 @@ class InvenTreeNFCScanner(
     WEBSITE = "https://github.com/daveismith/inventree-nfc-scanner-plugin"
     LICENSE = "MIT"
 
-    MIN_VERSION = "1.0.0"
+    MIN_VERSION = "1.4.3"
 
     SETTINGS = {
         "TAG_PASSWORD": {

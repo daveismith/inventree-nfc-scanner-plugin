@@ -1,6 +1,6 @@
 # Test suite: plan
 
-Status: proposed (2026-10-08). Nothing here is built yet.
+Status: agreed (2026-10-08); nothing built yet. The decisions are under [Decisions](#decisions).
 
 A pytest suite for the plugin, run on GitHub's hosted runners against several InvenTree
 versions, covering the server logic, the frontend in a headless browser with a simulated
@@ -59,9 +59,10 @@ A job per InvenTree version:
    with `INVENTREE_PLUGINS_ENABLED`, `INVENTREE_PLUGIN_TESTING` and
    `INVENTREE_PLUGIN_TESTING_SETUP` set.
 
-The database is SQLite in a temporary directory by default. A second leg runs against
-PostgreSQL, since production uses it and the row locks (`select_for_update`) only mean
-something there.
+The database is SQLite in a temporary directory on every push and pull request. A weekly
+run (and any run started by hand) repeats the server suite against PostgreSQL, since production
+uses it and the row locks (`select_for_update`) only mean something there. Tests that need real
+row locks carry a `postgres` marker and are skipped on SQLite.
 
 The jobs run **inside a container** (`container: python:<version>`), so the PostgreSQL service
 is reached by name on the job's private network. Nothing is published on the runner.
@@ -93,7 +94,7 @@ is reached by name on the job's private network. Nothing is published on the run
 
 ### What moves in
 
-- **`dev/check.py`** (46 checks) and **`dev/check_fleet.py`** (60) become test modules:
+- **`dev/check.py`** (about 50 checks) and **`dev/check_fleet.py`** (about 60) become test modules:
   `test_sync.py`, `test_jobs.py`, `test_links.py`, `test_fleet_*.py`. Their scenarios carry over
   one to one, and are faster in process.
 - **`dev/check_rules.py`** becomes real tests, with its rolled-back transaction replaced by the
@@ -101,7 +102,7 @@ is reached by name on the job's private network. Nothing is published on the run
 - **New coverage the live scripts could not reach:**
   - the deployment state machine's timeouts and retries;
   - `expire_jobs` and `mark_stale_scanners`;
-  - concurrent deploy and delete, and concurrent links of one UID (PostgreSQL leg);
+  - concurrent deploy and delete, and concurrent links of one UID (`postgres`, weekly);
   - automatic deployment, which `--auto-deploy` could not isolate on a live server;
   - the plugin's settings validators.
 - **`makemigrations --check`** for the plugin's app, once the ids are declared explicitly on
@@ -177,7 +178,7 @@ implementations.
 | Fixture | Gives |
 | --- | --- |
 | `stack` (session) | the Compose project up and healthy; torn down at the end, with its logs saved |
-| `browser_context_args` | Chromium with the secure-origin flag; tracing, screenshots and video kept on failure |
+| `browser_context_args` | Chromium with the secure-origin flag at 1280×720; tracing, screenshots and video kept on failure, the video turned into a GIF (below) |
 | `serial` | the init script installed in the page, wired to a scanner model; `serial.scanner` to drive it, `serial.unplug()` and `serial.replug()` |
 | `logged_in` | a page logged in as admin, clerk or a user without permissions (InvenTree's own Playwright fixtures do form login the same way) |
 | `seed` | data through the REST API: locations, network machines, releases, deployments |
@@ -250,16 +251,16 @@ the fake plugin listens on its loopback.
 
 | Leg | Versions | When |
 | --- | --- | --- |
-| Supported | the oldest supported, and the newest patch of each minor since (today 1.4.3 and 1.5.6) | every push and pull request; blocking |
+| Supported | 1.4.3 and 1.5.6: the oldest supported, and the newest patch of each minor since | every push and pull request; blocking |
 | Next | `latest` image / `master` source | nightly, and on demand; not blocking; a failure opens or updates an issue |
 
 - **The list lives in one file** (`tests/inventree-versions.json`), read by the workflow's
   matrix.
 - **A weekly job proposes new releases.** It compares the list with InvenTree's releases and
   opens a pull request adding a new release, so a version is supported once it passes.
-- **`MIN_VERSION` should match the oldest version tested.** The plugin's `MIN_VERSION` (1.0.0)
-  claims more than has ever been run. Either the matrix includes 1.0 or `MIN_VERSION` rises to
-  the oldest version in the list.
+- **`MIN_VERSION` matches the oldest version tested.** It is 1.4.3 (it was 1.0.0, which
+  claimed more than had ever been run). When the oldest version leaves the list, `MIN_VERSION`
+  rises with it in the same pull request. A test reads both and fails if they disagree.
 
 ## Reporting in GitHub
 
@@ -273,10 +274,24 @@ the fake plugin listens on its loopback.
   the test that failed, in the Files view.
 - **Job summary.** A conftest hook writes a short Markdown summary to `$GITHUB_STEP_SUMMARY`: the
   counts per layer and version, the slowest tests, and links to the artifacts below.
-- **Browser failures.** The Playwright trace, a screenshot and a video of the failing test, the
-  scanner model's transcript of every line exchanged, and the stack's container logs are
-  uploaded as artifacts, kept 14 days. A trace opens in `playwright show-trace`, or at
+- **Browser failures.** The Playwright trace, a screenshot and an animated GIF of the failing
+  test, the scanner model's transcript of every line exchanged, and the stack's container logs
+  are uploaded as artifacts, kept 14 days. A trace opens in `playwright show-trace`, or at
   trace.playwright.dev.
+- **Video as GIF.** pytest-playwright records with `--video retain-on-failure`, so passing tests
+  leave nothing. A hook after each failed test converts its WebM to a GIF with ffmpeg (installed
+  in the `tests` image) and deletes the WebM:
+
+  ```
+  ffmpeg -i video.webm -vf "fps=6,scale=800:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=64:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle" video.gif
+  ```
+
+  Six frames a second, 800 pixels wide and a 64-colour palette suit a mostly static page: the
+  palette is computed per clip, and only the changed rectangle of each frame is stored. A
+  ten-second clip that changes in every pixel, the worst case, came to 1.4 MB; a page that
+  mostly holds still comes to much less. If a GIF still exceeds 5 MB, the hook halves
+  the frame rate and tries once more, and otherwise keeps the trace alone, which holds the
+  same frames as screenshots.
 - **Coverage.** pytest-cov on layer 2, with the total in the summary and the report as an
   artifact. A coverage floor is added once the suite has settled.
 
@@ -285,15 +300,18 @@ the fake plugin listens on its loopback.
 | Workflow | Jobs | Trigger |
 | --- | --- | --- |
 | `ci.yaml` (existing) | lint, build, frontend lint and build, bundle check | push, pull request |
-| `tests.yaml` | `pure`; `server` × version × {sqlite, postgres}; `browser` × version; `firmware` (newest and oldest release); `report` | push, pull request |
-| `nightly.yaml` | the same against InvenTree `master`/`latest`; the version-list proposal (weekly) | schedule, manual |
+| `tests.yaml` | `pure`; `server` × version (SQLite); `browser` × version; `firmware` (newest and oldest release); `report` | push, pull request |
+| `scheduled.yaml` | nightly: the suite against InvenTree `master`/`latest`. Weekly: `server` × version on PostgreSQL, and the version-list proposal | schedule, manual |
 
 Images are cached between runs: the InvenTree base images through the Docker layer cache, the
 test images as build artifacts keyed by InvenTree version and the plugin's requirements, and
 pip by InvenTree tag.
 
 Rough run time on a hosted runner: server about 4 minutes per leg, browser about 8 per
-version, in parallel, so about 10 minutes for a pull request.
+version, in parallel, so about 10 minutes for a pull request (two server legs and two browser
+legs). The browser stack uses PostgreSQL throughout, as production does, so a pull request
+still exercises PostgreSQL through the UI; only the server suite's PostgreSQL legs wait for
+the weekly run.
 
 ## Order of work
 
@@ -304,11 +322,11 @@ version, in parallel, so about 10 minutes for a pull request.
      migrate in the test database.
 2. **The server suite.**
    - Port `check.py`, `check_fleet.py` and `check_rules.py`, and add the coverage listed above.
-   - The PostgreSQL leg.
+   - The weekly PostgreSQL legs, and the `postgres` marker.
    - Fix the model ids so `makemigrations --check` can run.
 3. **Reporting**, so everything after shows in pull requests from the start.
 4. **The browser stack and the WebSerial shim, with `FakeScanner`.** A smoke test (log in, open
-   a location, connect, program a tag), then the scenarios.
+   a location, connect, program a tag), then the scenarios, then the GIF conversion.
 5. **The firmware side.**
    - Its tests in pytest.
    - The simulator published by its release workflow and CI.
@@ -317,8 +335,11 @@ version, in parallel, so about 10 minutes for a pull request.
 7. **Retire the `dev/check*.py` scripts.** Point `dev/README.md` at `pytest -m server` (in
    process) and at the browser stack.
 
-## Open questions
+## Decisions
 
-- **Versions.** Which InvenTree versions to support, and so what `MIN_VERSION` becomes.
-- **PostgreSQL on every push, or nightly only.** It doubles the server legs.
-- **Video recording.** Keep it on failure (larger artifacts) or traces only.
+Settled on 2026-10-08:
+
+- **Versions.** InvenTree 1.4.3 and 1.5.6. `MIN_VERSION` rises from 1.0.0 to 1.4.3.
+- **PostgreSQL** runs weekly and on demand. Pull requests run the server suite on SQLite, and
+  the browser suite on PostgreSQL.
+- **Video** is kept for failed tests only, as an animated GIF.

@@ -4,7 +4,8 @@ server in a transaction that is rolled back, so nothing it makes is kept or seen
 
     docker exec -i nfcdev-server sh -c 'cd /home/inventree/src/backend/InvenTree && python manage.py shell' < check_rules.py
 
-A stand-in for the Django test suite the plugin does not have yet (docs/open-issues.md, "No automated tests of the server logic").
+Superseded by the test suite (tests/server/test_jobs.py, test_sync.py, test_links.py), which
+runs the same checks without the dev server.
 """
 
 import datetime

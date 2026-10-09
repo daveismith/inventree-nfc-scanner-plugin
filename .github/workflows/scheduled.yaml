@@ -1,0 +1,161 @@
+# The tests that do not run on every push (docs/test-suite-plan.md):
+#
+# - weekly, the server suite against PostgreSQL for every supported InvenTree version, which
+#   runs the concurrency tests SQLite skips;
+# - nightly, the suite against InvenTree's next release (the `latest` image). Not blocking: a
+#   failure opens an issue, or adds to the open one;
+# - weekly, a pull request adding InvenTree releases newer than the list.
+#
+# Each can be started by hand (Actions → Scheduled tests → Run workflow).
+#
+# Actions are pinned by commit hash; the comment after each is the release it maps to.
+
+name: Scheduled tests
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # nightly: InvenTree's next release
+    - cron: "23 7 * * 1" # Mondays: PostgreSQL, and the version proposal
+  workflow_dispatch:
+    inputs:
+      run:
+        description: What to run
+        type: choice
+        options: [postgres, next, versions]
+        default: postgres
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      supported: ${{ steps.read.outputs.supported }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: read
+        run: echo "supported=$(jq -c .supported tests/inventree-versions.json)" >> "$GITHUB_OUTPUT"
+
+  postgres:
+    name: server (InvenTree ${{ matrix.inventree }}, PostgreSQL)
+    needs: versions
+    if: github.event.schedule == '23 7 * * 1' || inputs.run == 'postgres'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        inventree: ${{ fromJSON(needs.versions.outputs.supported) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/test-image
+        with:
+          inventree: ${{ matrix.inventree }}
+      - name: Test
+        env:
+          COVERAGE_FILE: test-results/coverage-${{ matrix.inventree }}-postgres.dat
+        run: >
+          tests/run.sh --no-build --version ${{ matrix.inventree }} --db postgres
+          -m "pure or server"
+          --junitxml=test-results/junit-${{ matrix.inventree }}-postgres.xml
+          -o junit_suite_name="InvenTree ${{ matrix.inventree }}, PostgreSQL"
+          --cov --cov-report=
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: results-${{ matrix.inventree }}-postgres
+          path: test-results/
+          retention-days: 14
+
+  postgres-report:
+    needs: postgres
+    if: always() && needs.postgres.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/report
+        with:
+          check-name: Test results (PostgreSQL)
+
+  next:
+    name: server (InvenTree latest)
+    if: (github.event_name == 'schedule' && github.event.schedule != '23 7 * * 1') || inputs.run == 'next'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/test-image
+        with:
+          inventree: latest
+      - name: Test
+        id: test
+        run: >
+          tests/run.sh --no-build --version latest
+          -m "pure or server"
+          --junitxml=test-results/junit-latest-sqlite.xml
+          -o junit_suite_name="InvenTree latest, SQLite"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: results-latest
+          path: test-results/
+          retention-days: 14
+      - name: Open or update the issue
+        if: failure() && steps.test.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Tests fail against InvenTree's next release"
+          number=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          body="The nightly run against \`inventree/inventree:latest\` failed: $RUN"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body
+
+          Not blocking: the supported versions (tests/inventree-versions.json) still pass on every push. This is early warning of a change in InvenTree that will need the plugin to follow it."
+          fi
+
+  propose-versions:
+    name: propose InvenTree versions
+    if: github.event.schedule == '23 7 * * 1' || inputs.run == 'versions'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare with InvenTree's releases
+        id: propose
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          proposed=$(gh api repos/inventree/InvenTree/releases --paginate \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+            | python3 tests/propose_versions.py)
+          echo "proposed=$proposed" >> "$GITHUB_OUTPUT"
+      - name: Open a pull request
+        if: steps.propose.outputs.proposed != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROPOSED: ${{ steps.propose.outputs.proposed }}
+        run: |
+          branch="test-inventree-$(echo "$PROPOSED" | tr ' .' '-_')"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Already proposed on $branch"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "tests: test against InvenTree $PROPOSED"
+          git push origin "$branch"
+          gh pr create --head "$branch" --title "Test against InvenTree $PROPOSED" --body "InvenTree has released a version the tests do not cover yet. This adds it to tests/inventree-versions.json.
+
+          A pull request opened by this workflow does not start other workflows (GitHub's rule for its own token), so the tests have not run on it yet: close and reopen it, or push to it, to run them. Merge once they pass."

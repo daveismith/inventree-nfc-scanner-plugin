@@ -1,6 +1,6 @@
 # Test suite: plan
 
-Status: agreed (2026-10-08); nothing built yet. The decisions are under [Decisions](#decisions).
+Status: steps 1, 2, 3 and 6 built (2026-10-08; see [Progress](#progress)); the browser and firmware layers are next. The decisions are under [Decisions](#decisions). How to run and extend what exists: [tests/README.md](../tests/README.md).
 
 A pytest suite for the plugin, run on GitHub's hosted runners against several InvenTree
 versions, covering the server logic, the frontend in a headless browser with a simulated
@@ -50,24 +50,25 @@ layer and a developer can run any of them locally.
 
 ### Running against a version of InvenTree
 
-A job per InvenTree version:
+As built (the first design checked out InvenTree's source per version; its Docker image turned
+out to hold the same, with the requirements installed):
 
-1. Check out InvenTree at the tag, and install its `requirements.txt` and
-   `requirements-dev.txt` into a virtualenv. The pip cache is keyed by the tag.
-2. Install the plugin editable.
-3. Run pytest from the plugin's `tests/` with InvenTree's settings module and Python path, and
-   with `INVENTREE_PLUGINS_ENABLED`, `INVENTREE_PLUGIN_TESTING` and
-   `INVENTREE_PLUGIN_TESTING_SETUP` set.
+1. Build `inventree-nfc-test:<version>`, `FROM inventree/inventree:<version>` with the test
+   packages added (`tests/Dockerfile`). In CI the layers are cached per version.
+2. Run it with the working tree mounted, `--network none`, install the plugin from the tree,
+   and run pytest with test settings (`tests/inventree_settings.py`): `tests/run.sh`.
 
 The database is SQLite in a temporary directory on every push and pull request. A weekly
 run (and any run started by hand) repeats the server suite against PostgreSQL, since production
 uses it and the row locks (`select_for_update`) only mean something there. Tests that need real
-row locks carry a `postgres` marker and are skipped on SQLite.
+row locks carry a `postgres` marker and are skipped on SQLite. For it, `tests/run.sh --db
+postgres` puts the database and the tests on a Docker network created `--internal`: no route
+off the host, nothing published.
 
-The jobs run **inside a container** (`container: python:<version>`), so the PostgreSQL service
-is reached by name on the job's private network. Nothing is published on the runner.
+### Fixtures (`tests/server/conftest.py`)
 
-### Fixtures (`tests/conftest.py`)
+As designed; the fixtures as built, under the names tests use, are listed in
+[tests/README.md](../tests/README.md).
 
 | Fixture | Gives |
 | --- | --- |
@@ -86,8 +87,9 @@ is reached by name on the job's private network. Nothing is published on the run
 
 ### Rules
 
-- **No network.** pytest-socket (`--disable-socket --allow-unix-socket`) fails any test that
-  opens a real connection: GitHub is always `responses`, and the database a local socket.
+- **No network.** The container has none (`--network none`; with PostgreSQL, an internal
+  network holding only the database), so a test that tried a real connection would fail.
+  GitHub is always `responses`. pytest-socket, planned for this, is not needed.
 - **Each test is independent.** The database rolls back after each test, and fixtures build
   only what a test asks for.
 - **Time is never waited for.** It is moved with `clock`.
@@ -334,6 +336,27 @@ the weekly run.
 6. **The nightly run against InvenTree's next release, and the version-list proposal.**
 7. **Retire the `dev/check*.py` scripts.** Point `dev/README.md` at `pytest -m server` (in
    process) and at the browser stack.
+
+## Progress
+
+- **1. Spike: done.** Four things make InvenTree testable under pytest, all in `tests/`:
+  "test" added to its command line (`inventree_setup.py`; otherwise it checks migrations on
+  the configured database and exits), the plugin's app installed in the settings before the
+  test database is migrated (`inventree_settings.py`), time zones on as in production, and
+  the registries trimmed for speed (`server/conftest.py`: no sample plugins, no registry hash).
+  `INVENTREE_PLUGIN_TESTING_SETUP` is needed: without it, plugins are not loaded from entry
+  points under test.
+- **2. Server suite: done.** 194 tests (about 40 s a version), ported from `dev/check.py`,
+  `dev/check_fleet.py` and `dev/check_rules.py` with the coverage listed above. The model ids
+  are declared, so `makemigrations --check` runs. The first PostgreSQL run found the
+  concurrent-link race (open issue 6 then), now fixed.
+- **3. Reporting: done**, with one difference: the job summary is the publishing action's and
+  the coverage table, not a conftest hook of our own. Coverage is combined across the legs;
+  the HTML report is the `coverage-html` artifact.
+- **6. Nightly and version proposal: done** (`.github/workflows/scheduled.yaml`). A pull
+  request it opens does not start the tests by itself (GitHub's rule for its own token):
+  close and reopen it.
+- **4, 5 and 7: not started.** `dev/check*.py` stay until the browser stack exists.
 
 ## Decisions
 

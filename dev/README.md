@@ -64,6 +64,10 @@ TOKEN=$(cat admin.token)
 curl -H "Authorization: Token $TOKEN" http://inventree.localhost:8080/plugin/nfcscanner/api/scanners/
 ```
 
+The test suite (`tests/run.sh`, [tests/README.md](../tests/README.md)) covers everything the
+scripts below check, and more, without this instance; use it for changes to the plugin. The
+scripts remain for checking this instance itself, until the suite drives a browser too.
+
 `check.py` runs the plugin's API checks against this instance: it creates a scanner user and
 machine and a stock location, then plays a scanner through `/sync` for a whole job:
 

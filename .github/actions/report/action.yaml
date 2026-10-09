@@ -1,0 +1,62 @@
+name: Test report
+description: >
+  Publish the JUnit results of every leg as one check run, combine their coverage, and put
+  the coverage table in the job summary and the HTML report in an artifact.
+inputs:
+  check-name:
+    description: The check run's name
+    required: true
+  artifact-pattern:
+    description: Which result artifacts to collect
+    default: results-*
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: ${{ inputs.artifact-pattern }}
+        path: test-results
+        merge-multiple: true
+    - name: Publish the results
+      # A pull request from a fork gets a read-only token, which cannot create a check run;
+      # its results are still in the job logs, the annotations and the artifacts.
+      if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+      uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+      with:
+        check_name: ${{ inputs.check-name }}
+        files: test-results/junit-*.xml
+        report_individual_runs: true
+        comment_mode: changes
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: "3.14"
+    - name: Combine the coverage
+      shell: bash
+      run: |
+        pip install --quiet "$(grep '^coverage==' tests/requirements.txt)"
+        shopt -s nullglob
+        data=(test-results/coverage-*.dat)
+        if [ ${#data[@]} -eq 0 ]; then
+          echo "No coverage data (every leg failed before measuring)." >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        coverage combine --keep --data-file=.coverage "${data[@]}"
+        coverage html --data-file=.coverage -d coverage-html --title "${{ inputs.check-name }}: coverage"
+        coverage xml --data-file=.coverage -o coverage.xml
+        {
+          echo "## Coverage"
+          echo
+          echo "Combined over: $(printf '%s ' "${data[@]##*/}")"
+          echo
+          coverage report --data-file=.coverage --format=markdown
+          echo
+          echo "The full report is the **coverage-html** artifact of this run (open index.html)."
+        } >> "$GITHUB_STEP_SUMMARY"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: coverage-html
+        path: |
+          coverage-html/
+          coverage.xml
+        retention-days: 14
+        if-no-files-found: ignore

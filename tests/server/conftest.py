@@ -176,12 +176,6 @@ def make_location(name=None):
 
 
 @pytest.fixture
-def tag_uid():
-    """A fresh 7-byte NTAG UID, as hex."""
-    return lambda: f"04{next(_counter):012X}"
-
-
-@pytest.fixture
 def machines(db):
     """The machine registry (loaded once for the session); the machines a test adds to it are
     taken out again afterwards, since the database forgets them."""

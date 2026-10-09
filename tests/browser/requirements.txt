@@ -1,0 +1,6 @@
+# The browser layer's packages (tests/browser/tests.Dockerfile). Playwright matches the image.
+playwright==1.63.0
+pytest==9.1.1
+pytest-playwright==0.10.0
+pytest-github-actions-annotate-failures==0.4.2
+requests==2.34.2

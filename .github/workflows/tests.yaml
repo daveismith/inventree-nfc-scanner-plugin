@@ -1,7 +1,11 @@
-# The test suite (tests/, docs/test-suite-plan.md): the pure and server layers against every
-# supported InvenTree version (tests/inventree-versions.json), on SQLite. Each leg runs in a
-# container with no network (tests/run.sh); results are published as one check run, and
-# coverage is combined across the legs.
+# The test suite (tests/, docs/test-suite-plan.md), against every supported InvenTree version
+# (tests/inventree-versions.json):
+#
+# - the pure and server layers on SQLite, each in a container with no network (tests/run.sh);
+# - the browser layer: InvenTree, PostgreSQL and Redis, and Playwright with a simulated USB
+#   scanner, on an internal Docker network (tests/browser/run.sh).
+#
+# Results are published as one check run, and the server legs' coverage is combined.
 #
 # Actions are pinned by commit hash; the comment after each is the release it maps to.
 
@@ -55,9 +59,43 @@ jobs:
           path: test-results/
           retention-days: 14
 
+  browser:
+    name: browser (InvenTree ${{ matrix.inventree }})
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        inventree: ${{ fromJSON(needs.versions.outputs.supported) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the Playwright image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tests/browser
+          file: tests/browser/tests.Dockerfile
+          tags: inventree-nfc-browser-tests
+          load: true
+          cache-from: type=gha,scope=browser-tests
+          cache-to: type=gha,mode=max,scope=browser-tests
+      - name: Test
+        run: >
+          tests/browser/run.sh --version ${{ matrix.inventree }} --no-build
+          --junitxml=test-results/junit-${{ matrix.inventree }}-browser.xml
+          -o junit_suite_name="InvenTree ${{ matrix.inventree }}, browser"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          # JUnit XML; for each failed test its trace, screenshot, GIF and serial transcript;
+          # the stack's logs.
+          name: results-${{ matrix.inventree }}-browser
+          path: test-results/
+          retention-days: 14
+
   report:
-    needs: server
-    if: always() && needs.server.result != 'skipped'
+    needs: [server, browser]
+    if: always() && (needs.server.result != 'skipped' || needs.browser.result != 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -142,8 +142,7 @@ version on every pull request. See [tests/README.md](tests/README.md).
 trying the plugin by hand and with a real scanner; see [dev/README.md](dev/README.md).
 `dev/usb_update.py` installs an update on a real USB scanner as the browser would, and the
 firmware repository's `tools/sync_bridge.py` lets a real USB scanner stand in for a network
-one. `dev/check.py` and `dev/check_fleet.py`, which exercise the API against that instance,
-came before the test suite and are kept until it covers the browser too.
+one. `dev/add_scanner.py` sets a real scanner up as a network scanner on that instance.
 
 ## How it works
 
@@ -188,5 +187,4 @@ real scanner: a release uploaded and checked, a deployment over the network (dow
 restarted, confirmed), and one over USB through `dev/usb_update.py`, which follows the
 browser's sequence. The fleet dashboard item and the update notification are covered by the
 browser tests (`tests/browser/`), with a simulated scanner and with the firmware's own code.
-Not yet verified: fetching a real release from GitHub (firmware v1.0.0 is now published);
-taking a release is checked against a stand-in for GitHub.
+Fetching a real release from GitHub (firmware v1.0.0) is verified on a production server.

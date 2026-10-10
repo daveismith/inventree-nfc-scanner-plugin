@@ -27,7 +27,7 @@ record.
 
 - Where: `dev/docker-compose.yml` publishes `8080:8080` on all interfaces; `dev/Caddyfile`
   answers any host on purpose; `dev/README.md` and `dev/.env` document the admin password;
-  `dev/check.py` sets a known password for the scanner user.
+  `dev/add_scanner.py` sets a known password for the scanner user.
 - Fix: bind the proxy to `127.0.0.1` by default and make LAN exposure (needed for a real reader)
   an explicit opt-in, documented with its risk.
 

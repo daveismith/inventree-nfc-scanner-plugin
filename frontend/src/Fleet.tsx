@@ -37,6 +37,7 @@ import {
   getFleet,
   uploadRelease
 } from './api';
+import { announceDeployment } from './channel';
 
 const STATE_COLOR: Record<string, string> = {
   pending: 'gray',
@@ -178,6 +179,8 @@ function FleetItem({ context }: { context: InvenTreePluginContext }) {
         }),
       (r) => {
         const made = r.results.filter((x: any) => x.deployment).length;
+        // A USB scanner connected to this browser is offered it now, in any tab.
+        if (made) announceDeployment();
         const refused = r.results.filter((x: any) => x.refused);
         setNote(
           `${made} deployment${made === 1 ? '' : 's'} made.` +

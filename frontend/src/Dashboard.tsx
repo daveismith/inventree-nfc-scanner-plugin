@@ -14,7 +14,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getScanners, type Scanner } from './api';
 import { scanner } from './scanner';
 import { hasWebSerial } from './serial';
-import { UpdateNotice } from './UpdateNotice';
+import { startUpdateOverlay } from './UpdateOverlay';
 
 function ago(iso: string | null): string {
   if (!iso) return 'never';
@@ -34,6 +34,7 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
 
   useEffect(() => {
     scanner.attach(context.navigate, context.api);
+    startUpdateOverlay(); // the update, as a notification on every page from now on
   }, [context.navigate, context.api]);
 
   useEffect(() => {
@@ -94,7 +95,6 @@ function NfcDashboardItem({ context }: { context: InvenTreePluginContext }) {
           )}
         </Group>
       )}
-      {hasWebSerial() && <UpdateNotice />}
       {scanners.length === 0 ? (
         <Text c='dimmed' size='sm'>
           No network NFC scanners are configured.

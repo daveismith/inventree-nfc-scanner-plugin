@@ -27,6 +27,7 @@ import {
   usbReport,
   usbStart
 } from './api';
+import { DEPLOY_CHANNEL } from './channel';
 import {
   grantedPort,
   hasWebSerial,
@@ -41,6 +42,14 @@ type Navigate = (path: string) => void;
 type Api = InvenTreePluginContext['api'];
 
 const CHUNK = 768; // bytes of image per ota_data line (the firmware's APP_OTA_CHUNK_MAX)
+
+/**
+ * How often a connected scanner is checked in again, so an update deployed after it connected
+ * is offered without a reload. The browser tests shorten it (window.__NFC_SCANNER_POLL_MS).
+ */
+const RECHECK_MS: number =
+  (typeof window !== 'undefined' && (window as any).__NFC_SCANNER_POLL_MS) ||
+  30000;
 
 export interface UpdateProgress {
   version: string;
@@ -93,6 +102,9 @@ class ScannerService {
   private api: Api | null = null;
   /** The update this tab installed, whose verdict the next check-in brings. */
   private awaitingVerdict: number | null = null;
+  /** The update the user put off ("Later"): not offered again until the scanner reconnects. */
+  private deferred: number | null = null;
+  private recheckTimer = 0;
 
   /** React-style subscription (for useSyncExternalStore). */
   subscribe = (listener: () => void) => {
@@ -129,8 +141,16 @@ class ScannerService {
       } else {
         this.closeWhenIdle = false;
         this.reconnect().catch(() => {});
+        this.recheck(); // back to the tab: anything deployed meanwhile is offered now
       }
     });
+    // A deployment made on this plugin's fleet page, in this tab or another, is offered at
+    // once rather than at the next periodic check-in.
+    if (typeof BroadcastChannel !== 'undefined') {
+      new BroadcastChannel(DEPLOY_CHANNEL).onmessage = (e) => {
+        if (e.data?.type === 'deployed') this.recheck();
+      };
+    }
     // Plugged in or out: only the scanner matters, not any other serial device.
     navigator.serial?.addEventListener('disconnect', (e) => {
       if (this.port && (e.target as unknown) === this.port) this.link?.close();
@@ -160,6 +180,8 @@ class ScannerService {
             ? { info: null, onReader: null, update: null }
             : {})
         });
+        if (link === 'open') this.startRechecks();
+        else window.clearInterval(this.recheckTimer);
         // Another tab has the port: it lets go when hidden, or when its job ends, with no
         // word to us, so look again now and then.
         window.clearInterval(this.retryTimer);
@@ -211,6 +233,7 @@ class ScannerService {
       }
       if (!opened) return;
       this.port = port;
+      this.deferred = null; // a new connection: a put-off update is offered again
       await link.request({ cmd: 'hid', enabled: false }).catch(() => {});
       let info: ScannerMessage;
       try {
@@ -256,10 +279,36 @@ class ScannerService {
         }
       });
     }
-    this.set({ update: ci.update });
-    if (ci.update?.required && !this.state.updating) {
+    const offer =
+      ci.update && ci.update.id === this.deferred && !ci.update.required
+        ? null // put off for this connection
+        : ci.update;
+    this.set({ update: offer });
+    if (offer?.required && !this.state.updating) {
       this.installUpdate().catch(() => {});
     }
+  }
+
+  private startRechecks() {
+    window.clearInterval(this.recheckTimer);
+    this.recheckTimer = window.setInterval(() => this.recheck(), RECHECK_MS);
+  }
+
+  /**
+   * Check the connected scanner in again, for an update deployed since it connected. Not while
+   * an update is being installed or awaits its verdict: the server reads a check-in then as the
+   * update cut off, or as the scanner back on its old firmware.
+   */
+  recheck() {
+    if (
+      !this.isOpen ||
+      !this.state.info ||
+      this.state.updating ||
+      this.awaitingVerdict !== null ||
+      document.visibilityState !== 'visible'
+    )
+      return;
+    this.checkIn(this.state.info).catch(() => {});
   }
 
   /** The user chose "Later". */
@@ -268,6 +317,7 @@ class ScannerService {
     const reader = this.state.info?.reader;
     if (!offer || !this.api || !reader) return;
     await usbDefer(this.api, offer.id, reader);
+    this.deferred = offer.id;
     this.set({
       update: null,
       updateNote: {

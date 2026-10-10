@@ -2,7 +2,10 @@
 # Run the browser layer against one InvenTree version: the stack in compose.yaml comes up on
 # an internal network, the tests run in its `tests` container, and it all goes away after.
 #
-#   tests/browser/run.sh [--version 1.4.3] [--no-build] [pytest arguments...]
+#   tests/browser/run.sh [--version 1.4.3] [--no-build] [--firmware] [pytest arguments...]
+#
+# --firmware runs the tests against the firmware's own code (marked `firmware`; the simulator
+# from tests/browser/sim.sh, which must be there) instead of the rest.
 #
 # The tests run in the image tests/browser/image.sh names: used as it is if it is here already,
 # else pulled from GitHub's registry, else (a change to tests.Dockerfile or requirements.txt not
@@ -14,10 +17,12 @@ set -eu
 here=$(cd "$(dirname "$0")/../.." && pwd)
 version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["supported"][0])' "$here/tests/inventree-versions.json")
 build=1
+marks="browser and not firmware"
 while [ $# -gt 0 ]; do
     case "$1" in
         --version) version=$2; shift 2 ;;
         --no-build) build=0; shift ;;
+        --firmware) marks=firmware; export REQUIRE_SIM=1; shift ;;
         *) break ;;
     esac
 done
@@ -50,6 +55,6 @@ if [ "$build" = 1 ]; then
 fi
 # What is not here yet; an image already pulled is used as it is.
 $compose pull --quiet --ignore-buildable --policy missing 2>/dev/null || true
-$compose run --rm tests python -m pytest -m browser \
+$compose run --rm tests python -m pytest -m "$marks" \
     --output test-results/browser --video retain-on-failure --screenshot only-on-failure \
     --tracing retain-on-failure "$@"

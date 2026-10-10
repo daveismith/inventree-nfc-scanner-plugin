@@ -153,9 +153,66 @@ jobs:
           path: test-results/
           retention-days: 14
 
+  firmware:
+    # The browser against the firmware's own code (tests/browser/test_firmware.py): its
+    # simulator, host_sim, built from the firmware repository, behind WebSerial and calling
+    # /sync. The firmware's main branch until it publishes releases to test against.
+    name: firmware (InvenTree ${{ matrix.inventree }})
+    needs: [versions, browser-image]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        inventree: ${{ fromJSON(needs.versions.outputs.supported) }}
+    env:
+      FIRMWARE_REF: main
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the firmware
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: daveismith/inventree_nfc_scanner
+          ref: ${{ env.FIRMWARE_REF }}
+          path: firmware
+      - id: firmware
+        run: echo "sha=$(git -C firmware rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: The simulator, built once per firmware commit
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tests/browser/.sim
+          key: host-sim-linux-x86_64-${{ steps.firmware.outputs.sha }}
+      - name: Build the simulator
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: tests/browser/sim.sh --firmware firmware
+      - name: Log in to GitHub's registry
+        continue-on-error: true  # not needed once the package is public
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/pull-inventree
+        with:
+          inventree: ${{ matrix.inventree }}
+      - name: Test
+        run: >
+          tests/browser/run.sh --version ${{ matrix.inventree }} --firmware
+          --junitxml=test-results/junit-${{ matrix.inventree }}-firmware.xml
+          -o junit_suite_name="InvenTree ${{ matrix.inventree }}, firmware ${{ env.FIRMWARE_REF }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: results-${{ matrix.inventree }}-firmware
+          path: test-results/
+          retention-days: 14
+
   report:
-    needs: [server, browser]
-    if: always() && (needs.server.result != 'skipped' || needs.browser.result != 'skipped')
+    needs: [server, browser, firmware]
+    if: always() && (needs.server.result != 'skipped' || needs.browser.result != 'skipped' || needs.firmware.result != 'skipped')
     runs-on: ubuntu-26.04
     permissions:
       contents: read

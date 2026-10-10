@@ -114,8 +114,9 @@ The image endpoint answers any signed-in user or API token; the images are publi
 
 ## Trying it locally
 
-`dev/check_fleet.py` exercises all of the above against the development instance, with a
-scanner of its own and a stand-in for GitHub. `dev/usb_update.py --port <scanner>` does what
+The test suite exercises all of the above (`tests/server/test_fleet_*.py`, and in a browser
+`tests/browser/test_fleet.py` and `test_usb_update.py`, with a stand-in for GitHub and a
+simulated scanner); see tests/README.md. `dev/usb_update.py --port <scanner>` does what
 the browser does, against a real scanner on USB. A development build of the firmware (which
 allows plain http) can be packaged for upload with `tools/make_release.py --dev` in the
 firmware repository.

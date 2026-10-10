@@ -50,11 +50,6 @@ and the compose file mounts this repository there. At every start InvenTree runs
   together: both copy the plugin's static files at once and can leave a hashed bundle under a
   suffixed name. `docker exec nfcdev-server invoke static` puts it right.
 
-`dev/check.py` plays the scanner itself, with the reader id of the machine it creates on
-its first run. A real scanner configured for the same instance would collect the checks'
-commands first and make them fail, so take it off the air for the run
-(`nfcprog.py net disable`, then `net enable`).
-
 ## Try the API
 
 `setup.sh` leaves an admin API token in `dev/admin.token`. For example:
@@ -64,29 +59,10 @@ TOKEN=$(cat admin.token)
 curl -H "Authorization: Token $TOKEN" http://inventree.localhost:8080/plugin/nfcscanner/api/scanners/
 ```
 
-The test suite (`tests/run.sh`, [tests/README.md](../tests/README.md)) covers everything the
-scripts below check, and more, without this instance; use it for changes to the plugin. The
-scripts remain for checking this instance itself, until the suite drives a browser too.
-
-`check.py` runs the plugin's API checks against this instance: it creates a scanner user and
-machine and a stock location, then plays a scanner through `/sync` for a whole job:
-
-```sh
-python3 check.py
-```
-
-`check_fleet.py` checks firmware updates (docs/fleet-updates.md): uploading and fetching
-releases (from a stand-in for GitHub it runs on port 8769, which the server reaches as
-`host.docker.internal`), deploying, and both routes step by step. It uses a scanner of its
-own, so a real scanner can stay on the air, and removes what it made:
-
-```sh
-python3 check_fleet.py
-```
-
-`--auto-deploy` adds the checks of automatic deployment. That reaches every scanner on the
-server, real ones included, so take them off the network first (`nfcprog.py net disable`); the
-check withdraws what it gave them and confirms none got past pending.
+Checking the plugin is the test suite's job: `tests/run.sh` (the server side) and
+`tests/browser/run.sh` (the browser side, with a simulated scanner), with no need for this
+instance. See [tests/README.md](../tests/README.md). This instance is for trying the plugin by
+hand, and with a real scanner.
 
 `usb_update.py --port /dev/cu.usbmodem…` does what the browser does when it connects to a
 USB scanner with an update waiting: check in, claim, fetch, stream it over serial, and check
@@ -97,16 +73,25 @@ get there first.
 
 ## A real scanner against this instance
 
-With the desk scanner on USB, the firmware repository's `tools/sync_bridge.py` presents it
-to this InvenTree as a network scanner:
+`add_scanner.py` sets a scanner up as a network scanner here: a user for it with an API
+token, and an NFC Scanner machine with its reader id (`nfcprog.py info` shows it; the default
+is the desk scanner's). It is safe to run again, and leaves the token in `scanner.token`:
+
+```sh
+python3 add_scanner.py [--reader nfc-34b7da52a084]
+```
+
+Then either give the scanner this server over USB, for its own Wi-Fi link
+(`nfcprog.py net server http://<this machine's address>:8080/plugin/nfcscanner`, which asks
+for the token; a development build is needed for http), or, with the scanner on USB, let the
+firmware repository's `tools/sync_bridge.py` present it as a network scanner:
 
 ```sh
 python3 ../../inventree_nfc_scanner/tools/sync_bridge.py \
     --url http://inventree.localhost:8080/plugin/nfcscanner --token $(cat scanner.token)
 ```
 
-`check.py` writes `scanner.token`, the token of the user the test machine is configured
-with. The scanner then shows online on the dashboard and in the NFC tag panel of any stock
+The scanner then shows online on the dashboard and in the NFC tag panel of any stock
 location, and a job queued there is written by the real scanner.
 
 ## Stop and reset

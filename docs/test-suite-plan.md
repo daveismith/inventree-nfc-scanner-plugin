@@ -1,6 +1,6 @@
 # Test suite: plan
 
-Status: steps 1, 2, 3, 4 and 6 built (2026-10-09; see [Progress](#progress)); the firmware layer (5) and retiring the `dev/check*.py` scripts (7) are next. The decisions are under [Decisions](#decisions). How to run and extend what exists: [tests/README.md](../tests/README.md).
+Status: every step built (2026-10-10; see [Progress](#progress)), but for testing against specific firmware releases (part of step 5). The decisions are under [Decisions](#decisions). How to run and extend what exists: [tests/README.md](../tests/README.md).
 
 A pytest suite for the plugin, run on GitHub's hosted runners against several InvenTree
 versions, covering the server logic, the frontend in a headless browser with a simulated
@@ -383,10 +383,13 @@ the weekly run.
 - **5. Firmware in the loop: the browser side done.** `tests/browser/test_firmware.py` (11
   tests) runs against the firmware's simulator behind WebSerial and as a network scanner; CI
   builds it from the firmware's `main`. The firmware publishes it as a CI artifact and a release
-  asset (its pull request 5). Still to do: the firmware's own tests in pytest, testing against
-  its newest and oldest supported releases once there are releases, and the contract gate
-  (a firmware release against the plugin at its `min_plugin`, in the firmware's CI).
-- **7: not started.**
+  asset (its pull request 5). The firmware's own tests are in pytest too (its `tests/`, pull
+  request 6). Still to do, now that both have released v1.0.0: testing against the firmware's
+  newest and oldest supported releases, and the contract gate (a firmware release against the
+  plugin at its `min_plugin`, in the firmware's CI).
+- **7. The `dev/check*.py` scripts: retired.** The test suite covers them. Their one other use,
+  setting up a network scanner on the dev instance (its user, token and machine) for a real
+  scanner, is `dev/add_scanner.py`.
 
 ## Decisions
 

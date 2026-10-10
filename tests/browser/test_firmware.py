@@ -19,6 +19,7 @@ from .conftest import (
     deployment,
     jobs_of,
     open_panel,
+    registered,
     upload_release,
     usb_badge,
     version,
@@ -141,6 +142,7 @@ def test_an_update_over_usb(admin_page, sim_usb, location, api):
     page = admin_page
     open_panel(page, location)
     expect(usb_badge(page)).to_have_text("connected")
+    registered(api, sim_usb.reader)
     new = version()
     # An image the simulator takes: it restarts reporting the version the image names.
     rel = release(new, app=f"fw={new}\n".encode() + secrets.token_bytes(20_000))
@@ -158,6 +160,7 @@ def test_an_image_whose_digest_does_not_match_is_refused(
     page = admin_page
     open_panel(page, location)
     expect(usb_badge(page)).to_have_text("connected")
+    registered(api, sim_usb.reader)
     rel = release(version())
     # The server's record says one digest; the simulator is sent bytes with another. The
     # page checks first where it can (crypto.subtle); without it, as outside a secure context,

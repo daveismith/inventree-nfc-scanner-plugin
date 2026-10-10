@@ -8,6 +8,7 @@ from playwright.sync_api import expect
 from ..firmware_release import release
 from .conftest import (
     deploy,
+    registered,
     deployment,
     open_panel,
     replug,
@@ -22,6 +23,7 @@ def offered(page, api, usb, location, **deploy_kw):
     """The scanner seen over USB, then a release deployed to it, then the page again."""
     open_panel(page, location)
     expect(usb_badge(page)).to_have_text("connected")
+    registered(api, usb.reader)
     rel = release(version())
     fw = upload_release(api, rel)
     (dep,) = deploy(api, fw, [usb.reader], **deploy_kw)
@@ -88,6 +90,7 @@ def test_an_update_cut_off_is_offered_again(admin_page, context, usb, location, 
     rel = release(version(), size=600_000)  # long enough to close the page part way
     open_panel(page, location)
     expect(usb_badge(page)).to_have_text("connected")
+    registered(api, usb.reader)
     (dep,) = deploy(api, upload_release(api, rel), [usb.reader])
     page.reload()
     page.get_by_role("button", name="Update now").click()
@@ -109,16 +112,17 @@ def fast_recheck(context):
     context.add_init_script("window.__NFC_SCANNER_POLL_MS = 500;")
 
 
-def connected(page, location):
+def connected(page, location, api, usb):
     open_panel(page, location)
     expect(usb_badge(page)).to_have_text("connected")
+    registered(api, usb.reader)
 
 
 def test_an_update_deployed_after_connecting_is_offered_without_a_reload(
     fast_recheck, admin_page, usb, location, api
 ):
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     rel = release(version())
     deploy(api, upload_release(api, rel), [usb.reader])
     expect(page.get_by_text(f"Firmware {rel.version} for this scanner")).to_be_visible()
@@ -128,7 +132,7 @@ def test_the_offer_reaches_a_page_with_nothing_of_the_plugin_on_it(
     fast_recheck, admin_page, usb, location, api
 ):
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     # The header's Parts tab (the page has one of its own too): moving within the app, as
     # clicking does, so the service carries on.
     page.get_by_role("tab", name="Parts", exact=True).first.click()
@@ -152,7 +156,7 @@ def test_later_holds_until_the_scanner_reconnects(
     fast_recheck, admin_page, usb, location, api
 ):
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     rel = release(version())
     (dep,) = deploy(api, upload_release(api, rel), [usb.reader])
     offer = page.get_by_text(f"Firmware {rel.version} for this scanner")
@@ -172,7 +176,7 @@ def test_a_deployment_made_required_installs_without_asking(
     fast_recheck, admin_page, usb, location, api
 ):
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     rel = release(version())
     usb.next_fw = rel.version
     (dep,) = deploy(api, upload_release(api, rel), [usb.reader], required=True)
@@ -186,7 +190,7 @@ def test_checking_in_again_does_not_cut_an_update_short(
     fast_recheck, admin_page, usb, location, api
 ):
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     rel = release(version(), size=150_000)  # sent over many check-in intervals
     usb.next_fw = rel.version
     (dep,) = deploy(api, upload_release(api, rel), [usb.reader])
@@ -205,7 +209,7 @@ def test_a_deploy_from_the_fleet_page_reaches_the_scanner_in_another_tab_at_once
 ):
     # The usual 30 s between check-ins: what delivers it is the fleet page's word.
     page = admin_page
-    connected(page, location)
+    connected(page, location, api, usb)
     rel = release(version())
     upload_release(api, rel)
 

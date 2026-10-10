@@ -36,8 +36,11 @@ def release(
     settings_version=1,
     min_plugin="0.1.0",
     target="esp32s3",
+    app: bytes | None = None,
 ) -> Release:
-    app = secrets.token_bytes(size)
+    """`app`: the image, if not random bytes. The firmware's simulator takes an image that
+    starts `fw=<version>` and restarts reporting that version."""
+    app = secrets.token_bytes(size) if app is None else app
     merged = b"\xff" * 64 + app
     name = f"inventree_nfc_scanner-{version}"
     manifest = {

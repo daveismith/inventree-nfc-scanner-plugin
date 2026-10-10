@@ -83,6 +83,8 @@ services:
       INVENTREE_ADMIN_PASSWORD: admin-browser-tests
       INVENTREE_TEST_VERSION: ${INVENTREE_VERSION}
       GITHUB_ACTIONS: ${GITHUB_ACTIONS:-}
+      # Firmware in the loop (run.sh --firmware): fail rather than skip without the simulator.
+      REQUIRE_SIM: ${REQUIRE_SIM:-}
     depends_on:
       inventree:
         condition: service_healthy

@@ -9,6 +9,7 @@ are in [docs/test-suite-plan.md](../docs/test-suite-plan.md).
 | pure | `tests/pure/` | Python and pytest | `pytest -m pure` |
 | server | `tests/server/` | Docker | `tests/run.sh` |
 | browser | `tests/browser/` | Docker | `tests/browser/run.sh` |
+| firmware | `tests/browser/test_firmware.py` | Docker, a firmware checkout | `tests/browser/sim.sh`, then `tests/browser/run.sh --firmware` |
 
 ## Running
 
@@ -90,6 +91,31 @@ What the browser tests found about InvenTree, worked around in the fixtures:
   dashboard in their profile instead.
 - With several server workers, a scanner never heard from shows "unknown" in a worker that
   has not set it up yet, "offline" in one that has.
+
+## The firmware in the loop
+
+```sh
+tests/browser/sim.sh                          # build the firmware's simulator from ../inventree_nfc_scanner
+tests/browser/sim.sh --firmware path/to/checkout
+tests/browser/run.sh --firmware               # the browser tests marked `firmware`, against it
+```
+
+`test_firmware.py` runs the browser against the firmware's own code: its simulator, `host_sim`
+(the state machine, protocol, tag logic and OTA as a Linux program, with a simulated NTAG and a
+pty for USB). `browser/sim_scanner.py` puts it behind the simulated WebSerial port in place of
+`usb_scanner.py`, and moves its tag with its `!` lines (`sim.present("ntag215")`, `sim.tap()`,
+`sim.tear_after(2)`); with `SIM_SYNC_URL` it is a network scanner calling this server's `/sync`
+(`sim_net()`). Covered: connecting, programming, a tag read back, overwrite, the tag password, a
+tag pulled away mid-write, a tag of another kind, cancel, an update over USB (the simulator
+takes an image starting `fw=<version>` and restarts on it), an image whose digest does not
+match, and a job through the network link. Network updates are not: the simulator does not
+download over the network.
+
+`sim.sh` builds in Espressif's IDF image for this machine's CPU, reading the checkout without
+writing to it; the binary goes to `browser/.sim/host_sim` (or set `HOST_SIM`). Without it the
+tests are skipped, or with `--firmware`, fail. In CI the `firmware` job builds it from the
+firmware repository's `main` (cached per commit) until the firmware publishes releases, which
+carry it too (`inventree_nfc_scanner-<version>-sim-linux-<cpu>`).
 
 ## What is where
 

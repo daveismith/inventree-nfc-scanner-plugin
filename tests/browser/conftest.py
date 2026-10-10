@@ -383,6 +383,37 @@ class NetScanner:
         self.acked = max(self.acked, cmd["seq"])
 
 
+def _network_machine(api, user_with, made, name=None):
+    """An active network scanner machine with a user of its own: (token, reader, machine)."""
+    user = user_with()
+    r = requests.get(
+        f"{URL}/api/user/token/?name=scanner",
+        auth=(user["name"], user["password"]),
+        timeout=30,
+    )
+    assert r.ok, r.text
+    reader = f"nfc-{uuid.uuid4().hex[:12]}"
+    machine = api.post(
+        "/api/machine/",
+        {
+            "name": name or f"Scanner {next(_counter)}-{RUN}",
+            "machine_type": "nfc-scanner",
+            "driver": "nfc-network",
+            "active": True,
+        },
+        expect_status=201,
+    )
+    for key, value in (("READER_ID", reader), ("USER", str(user["pk"]))):
+        api.call(
+            "PUT",
+            f"/api/machine/{machine['pk']}/settings/D/{key}/",
+            json={"value": value},
+        )
+    api.post(f"/api/machine/{machine['pk']}/restart/")
+    made.append(machine["pk"])
+    return r.json()["token"], reader, machine
+
+
 @pytest.fixture
 def net_scanner(api, user_with):
     """`net_scanner(name=...)`: an active network scanner machine with a user of its own, and
@@ -390,35 +421,68 @@ def net_scanner(api, user_with):
     made = []
 
     def make(name=None):
-        user = user_with()
-        r = requests.get(
-            f"{URL}/api/user/token/?name=scanner",
-            auth=(user["name"], user["password"]),
-            timeout=30,
-        )
-        assert r.ok, r.text
-        reader = f"nfc-{uuid.uuid4().hex[:12]}"
-        machine = api.post(
-            "/api/machine/",
-            {
-                "name": name or f"Scanner {next(_counter)}-{RUN}",
-                "machine_type": "nfc-scanner",
-                "driver": "nfc-network",
-                "active": True,
-            },
-            expect_status=201,
-        )
-        for key, value in (("READER_ID", reader), ("USER", str(user["pk"]))):
-            api.call(
-                "PUT",
-                f"/api/machine/{machine['pk']}/settings/D/{key}/",
-                json={"value": value},
-            )
-        api.post(f"/api/machine/{machine['pk']}/restart/")
-        made.append(machine["pk"])
-        return NetScanner(r.json()["token"], reader, machine)
+        token, reader, machine = _network_machine(api, user_with, made, name)
+        return NetScanner(token, reader, machine)
 
     yield make
+    for pk in made:
+        api.patch(f"/api/machine/{pk}/", {"active": False})
+
+
+# The firmware itself (tests/browser/sim_scanner.py) ------------------------------------------
+
+
+def _sim_binary():
+    from .sim_scanner import binary
+
+    path = binary()
+    if path is None:
+        message = "no simulator: tests/browser/sim.sh builds it (or set HOST_SIM)"
+        if os.environ.get("REQUIRE_SIM"):
+            pytest.fail(message)
+        pytest.skip(message)
+    return path
+
+
+@pytest.fixture
+def sim_usb(context, request):
+    """The firmware's simulator on USB, chosen before, so the page connects by itself."""
+    from .sim_scanner import SimScanner
+
+    scanner = SimScanner(_sim_binary())
+    _bridge(context, scanner, granted=True)
+    yield scanner
+    _keep_transcript(request, scanner)
+    scanner.stop()
+
+
+@pytest.fixture
+def sim_net(api, user_with, request):
+    """`sim_net()`: the firmware's simulator as a network scanner: a machine for it, and the
+    simulator calling this server's /sync with its user's token. `.machine` is the machine."""
+    from .sim_scanner import SimScanner
+
+    made, sims = [], []
+
+    def make(name=None):
+        token, reader, machine = _network_machine(api, user_with, made, name)
+        # 127.0.0.1, not localhost: the simulator tries only the first address localhost
+        # resolves to (IPv6 here), and the server listens on IPv4.
+        url = URL.replace("://localhost", "://127.0.0.1") + P
+        os.environ.update(SIM_SYNC_URL=url, SIM_TOKEN=token, SIM_POLL_MS="300")
+        try:
+            sim = SimScanner(_sim_binary(), reader=reader)
+        finally:
+            for key in ("SIM_SYNC_URL", "SIM_TOKEN", "SIM_POLL_MS"):
+                os.environ.pop(key, None)
+        sim.machine = machine
+        sims.append(sim)
+        return sim
+
+    yield make
+    for sim in sims:
+        _keep_transcript(request, sim)
+        sim.stop()
     for pk in made:
         api.patch(f"/api/machine/{pk}/", {"active": False})
 

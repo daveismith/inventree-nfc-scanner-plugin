@@ -380,7 +380,13 @@ the weekly run.
   in GitHub's registry, tagged with their hash (`tests/browser/image.sh`); runs pull it. On a
   pull request run that cut the slowest browser job's image step from 2½–4 minutes (a build,
   even from cache) to a pull.
-- **5 and 7: not started.**
+- **5. Firmware in the loop: the browser side done.** `tests/browser/test_firmware.py` (11
+  tests) runs against the firmware's simulator behind WebSerial and as a network scanner; CI
+  builds it from the firmware's `main`. The firmware publishes it as a CI artifact and a release
+  asset (its pull request 5). Still to do: the firmware's own tests in pytest, testing against
+  its newest and oldest supported releases once there are releases, and the contract gate
+  (a firmware release against the plugin at its `min_plugin`, in the firmware's CI).
+- **7: not started.**
 
 ## Decisions
 

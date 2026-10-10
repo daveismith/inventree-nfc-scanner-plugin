@@ -180,14 +180,13 @@ request.
 
 Verified against InvenTree 1.4.3 (local Docker): installation from `plugins.txt`, the
 machine type and driver, every endpoint, long polling, a job carried to a real scanner by
-`sync_bridge.py`, and the UID landing as the location's barcode. Not yet verified: the
-panel and dashboard item rendered in a browser (their bundles build and are served, but
-nobody has clicked them), and the WebSerial route from the panel.
+`sync_bridge.py`, and the UID landing as the location's barcode; the panel, the dashboard
+item and the WebSerial route from the panel, in use with the desk scanner.
 
 Firmware updates (the fleet-updates branch) are verified against the same instance with the
 real scanner: a release uploaded and checked, a deployment over the network (downloaded,
 restarted, confirmed), and one over USB through `dev/usb_update.py`, which follows the
-browser's sequence. Not yet verified: the fleet dashboard item and the update notice in a
-browser, and fetching a real release from GitHub. The repository is public and the check
-reaches it with no token, but no release has been tagged yet; taking a release is checked
-against a stand-in for GitHub.
+browser's sequence. The fleet dashboard item and the update notification are covered by the
+browser tests (`tests/browser/`), with a simulated scanner and with the firmware's own code.
+Not yet verified: fetching a real release from GitHub (firmware v1.0.0 is now published);
+taking a release is checked against a stand-in for GitHub.

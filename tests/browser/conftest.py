@@ -537,6 +537,19 @@ def upload_release(api, rel, app=None):
     return r.json()
 
 
+def registered(api, reader, timeout=15.0):
+    """Wait until the server knows the scanner: the browser checks it in just after it shows it
+    connected, and a deployment to a scanner it has not heard of is refused."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(s["reader"] == reader for s in api.get(f"{P}/api/fleet/")["scanners"]):
+            return
+        time.sleep(0.2)
+    pytest.fail(f"the server never heard of {reader}")
+
+
 def deploy(api, fw, readers, **kw):
     out = api.post(
         f"{P}/api/fleet/deploy/", {"firmware": fw["id"], "scanners": readers, **kw}

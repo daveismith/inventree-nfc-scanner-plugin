@@ -75,13 +75,24 @@ not from its server means the proxy hides the scheme or host (`X-Forwarded-Proto
 ## A USB scanner
 
 When a browser connects to the scanner (on a location's NFC tag panel or the dashboard), it
-tells the server which scanner it is and what it runs. If an update is waiting, the browser
-shows it. What happens then is the admin's choice, in the *USB update policy* setting and per
+tells the server which scanner it is and what it runs, and checks in again every 30 seconds
+while it stays connected (and whenever the tab comes back into view), so an update deployed
+after it connected is offered without a reload. Deploying from the fleet page tells the
+browser at once: a scanner connected to the same browser, in any tab, is offered the update
+straight away. No check-in is made while an update is being installed or awaits its verdict:
+the server would read it as the update cut short.
+
+The update is shown as one of InvenTree's notifications, in the corner of whatever page the
+user is on: the offer, its progress, and how it went. It reaches every page from the moment
+the browser's scanner connection starts (the dashboard item or a location's NFC tag panel has
+been shown in this page load, as with tap-to-navigate); after a full page load elsewhere, not
+until then. What happens is the admin's choice, in the *USB update policy* setting and per
 deployment:
 
 - **Required**: the update installs at once; the panel cannot be used until it has.
 - **Deferrable**: the user chooses *Update now* or *Later*. *Later* is recorded, and the offer
-  returns on the next connection. A deployment can be given a date from which it is required.
+  returns the next time the scanner connects (not at the next check-in). A deployment can be
+  given a date from which it is required; it installs at the first check-in after that.
 
 Installing takes about half a minute for a 1.2 MB image: the browser fetches it from the
 server, checks it, and sends it to the scanner over the serial link. The scanner restarts

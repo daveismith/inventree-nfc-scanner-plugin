@@ -32,12 +32,14 @@ Known gaps are listed in [docs/open-issues.md](docs/open-issues.md).
 InvenTree in Docker, as on the Raspberry Pi:
 
 1. **Put the package in `plugins.txt`** in the data volume (next to `config.yaml`, usually
-   `inventree-data/plugins.txt`). One line, either a release from PyPI once there is one,
-   or the repository directly:
+   `inventree-data/plugins.txt`). One line: a release from this repository (it is not on PyPI
+   yet):
 
    ```
-   git+https://github.com/daveismith/inventree-nfc-scanner-plugin.git
+   git+https://github.com/daveismith/inventree-nfc-scanner-plugin.git@v1.0.0
    ```
+
+   The `@v1.0.0` pins a release; without it, the newest commit on `main` is installed.
 
    InvenTree installs everything in that file at each start (`INVENTREE_PLUGINS_ENABLED`
    must be `True`, which the standard `.env` sets). Alternatively, *Admin Center → Plugins

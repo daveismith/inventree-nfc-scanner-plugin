@@ -1,13 +1,16 @@
 # Publish to PyPi package index
 # Note: Requires a secret named PYPI_API_TOKEN to be set in the repository settings
+#
+# By hand only (Actions → PIP Publish → Run workflow) until the package is on PyPI: a release
+# would otherwise start it and fail for want of the token. To publish each release as it is
+# made, put back `release: types: [published]` once the secret is set.
 
 # Actions are pinned by commit hash; the comment after each is the release it maps to.
 
 name: PIP Publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read

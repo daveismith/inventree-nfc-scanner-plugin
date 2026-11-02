@@ -262,7 +262,7 @@ def test_a_job_within_its_time_does_not_expire(scanner, job_for, jobs):
     assert jobs(job["id"])["state"] == "waiting"
 
 
-# A late done (check_rules.py) ----------------------------------------------------------------
+# A late done, after the job was given up on ----------------------------------------------------------------
 
 
 @pytest.fixture
